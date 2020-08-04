@@ -75,21 +75,17 @@
         PzTaskCallback callback;
     };
 
-    #define PZ_TASK_INIT(callback_fn)   \
-        ((PzTask)({                     \
-            .next = NULL,               \
-            .callback = callback_fn     \
-        }))
-
-    static PZ_INLINE void PzTaskInit(PzTask* self, PzTaskCallback callback) {
-        *self = PZ_TASK_INIT(callback);
+    static PZ_INLINE PzTask PzTaskInit(PzTaskCallback callback) {
+        PzTask self;
+        self.callback = callback;
+        return self;
     }
 
     struct PzTaskBatchIter {
         PzTask* task;
-    }
+    };
 
-    static PZ_INLINE PzTask* PzTaskBatchIterNext(PzTaskBatch* self) {
+    static PZ_INLINE PzTask* PzTaskBatchIterNext(PzTaskBatchIter* self) {
         PzTask* task = self->task;
         if (PZ_LIKELY(task != NULL))
             self->task = task->next;
@@ -101,22 +97,13 @@
         PzTask* tail;
     };
 
-    #define PZ_TASK_BATCH_INIT      \
-        ((PzTaskBatch)({            \
-            .head = NULL,           \
-            .tail = NULL            \
-        }))
-
-    static PZ_INLINE void PzTaskBatchInit(PzTaskBatch* self) {
-        *self = PZ_TASK_BATCH_INIT;
-    }
-
-    static PZ_INLINE PzTaskBatch PzTaskBatchFromTask(PzTask* task) {
-        task->next = NULL;
-        return ((PzTaskBatch)({
-            .head = task,
-            .tail = task
-        }));
+    static PZ_INLINE PzTaskBatch PzTaskBatchInit(PzTask* task) {
+        if (task != NULL)
+            task->next = NULL;
+        PzTaskBatch self;
+        self.head = task;
+        self.tail = task;
+        return self;
     }
 
     static PZ_INLINE void PzTaskBatchPushFrontMany(PzTaskBatch* self, PzTaskBatch batch) {
@@ -126,7 +113,7 @@
             *self = batch;
         } else {
             batch.tail->next = self->head;
-            self->head = batch->head;
+            self->head = batch.head;
         }
     }
 
@@ -149,11 +136,11 @@
     }
 
     static PZ_INLINE void PzTaskBatchPushFront(PzTaskBatch* self, PzTask* task) {
-        PzTaskBatchPushFrontMany(self, PzTaskBatchFromTask(task));
+        PzTaskBatchPushFrontMany(self, PzTaskBatchInit(task));
     }
 
     static PZ_INLINE void PzTaskBatchPushBack(PzTaskBatch* self, PzTask* task) {
-        PzTaskBatchPushBackMany(self, PzTaskBatchFromTask(task));
+        PzTaskBatchPushBackMany(self, PzTaskBatchInit(task));
     }
 
     static PZ_INLINE void PzTaskBatchPush(PzTaskBatch* self, PzTask* task) {
@@ -161,12 +148,15 @@
     }
 
     static PZ_INLINE PzTask* PzTaskBatchPop(PzTaskBatch* self) {
-        PzTaskBatchPopFront(self);
+        return PzTaskBatchPopFront(self);
     }
 
     static PZ_INLINE PzTaskBatchIter PzTaskBatchGetIter(PzTaskBatch* self) {
-        return ((PzTaskBatchIter)({ .task = self->head }));   
-    
+        PzTaskBatchIter iter = { .task = self->head };
+        return iter;   
+    }
+
+    /*
 
     #define PZ_TASK_BUFFER_SIZE 256
 
@@ -177,6 +167,15 @@
         uintptr_t runq_next;
         PzTask* runq_buffer[PZ_TASK_BUFFER_SIZE];
     };
+
+    PZ_EXTERN void PzTaskThreadInit(
+        PzTaskThread* self,
+        PzTaskWorker* worker
+    );
+
+    PZ_EXTERN void PzTaskThreadDestroy(
+        PzTaskThread* self
+    );
 
     typedef struct PzTaskSchedulePtr {
         uintptr_t ptr;
@@ -389,6 +388,12 @@
         size_t active_nodes;
         PzTaskNode* start_node;
     };
+
+    PZ_EXTERN PZ_TASK_SCHED_INIT_STATUS PzTaskSchedulerInit(
+        PzTaskScheduler* self,
+        PzTaskCluster cluster
+    );
+    */
 
     ////////////////////////////////////////////////////////////////////
 
