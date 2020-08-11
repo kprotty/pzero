@@ -18,6 +18,15 @@ void PzTaskNodeDestroy(PzTaskNode* self) {
     return;
 }
 
+void PzTaskNodePush(PzTaskNode* self, PzTaskBatch batch) {
+    PZ_UNREFERENCED_PARAMETER(self);
+    PZ_UNREFERENCED_PARAMETER(batch);
+
+    // TODO
+
+    return;
+}
+
 void PzTaskNodeResume(PzTaskNode* self, PzTaskResumeResult* result_ptr) {
     PZ_UNREFERENCED_PARAMETER(self);
     PZ_UNREFERENCED_PARAMETER(result_ptr);

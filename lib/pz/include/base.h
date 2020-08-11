@@ -126,6 +126,17 @@
     PZ_EXTERN void PzCallPanicHandler(const char* file, int line_no, const char* fmt, ...);
 
     #define PzPanic(...) \
-        (*PzCallPanicHandler)(__FILE__, __LINE__, __VA_ARGS__)
+        PzCallPanicHandler(__FILE__, __LINE__, __VA_ARGS__)
+
+    // Asserts
+    #define PzAssert(cond, ...) \
+        (PZ_UNLIKELY(cond) ? (PzCallPanicHandler(__FILE__, __LINE__, __VA_ARGS__),false) : true)
+
+    #if defined(PZ_DEBUG)
+        #define PzDebugAssert(cond, ...) \
+            (PZ_UNLIKELY(cond) ? (PzCallPanicHandler(__FILE__, __LINE__, __VA_ARGS__),false) : true)
+    #else
+        #define PzDebugAssert(cond, ...)
+    #endif
 
 #endif
