@@ -129,6 +129,7 @@
         PzAtomicPtr runq_overflow;
         PZ_CACHE_ALIGN PzTask* runq_buffer[PZ_TASK_BUFFER_SIZE];
         PzTaskNode* node;
+        uintptr_t ptr;
     };
 
     PZ_EXTERN void PzTaskThreadInit(
@@ -209,14 +210,26 @@
         PzAtomicPtr ptr;
     };
 
+    typedef uint16_t PzTaskWorkerCount;
+
     struct PzTaskNode {
         PzTaskNode* next;
-        size_t num_workers;
         PzTaskWorker* workers;
+        PzTaskWorkerCount num_workers;
         PzTaskScheduler* scheduler;
         PZ_CACHE_ALIGN PzAtomicPtr idle_queue;
         PZ_CACHE_ALIGN PzAtomicPtr active_workers;
     };
+
+    PZ_EXTERN void PzTaskNodeInit(
+        PzTaskNode* self,
+        PzTaskWorker* workers,
+        PzTaskWorkerCount num_workers
+    );
+
+    PZ_EXTERN void PzTaskNodeDestroy(
+        PzTaskNode* self
+    );
 
     struct PzTaskNodeIter {
         PzTaskNode* start;
@@ -240,7 +253,7 @@
         return iter;
     }
 
-    static PZ_INLINE size_t PzTaskNodeGetWorkersLen(PzTaskNode* self) {
+    static PZ_INLINE PzTaskWorkerCount PzTaskNodeGetWorkersLen(PzTaskNode* self) {
         return self->num_workers;
     }
 

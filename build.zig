@@ -8,7 +8,7 @@ pub fn build(b: *std.build.Builder) void {
     const libpz = blk: {
         const lib = b.addSharedLibrary("pz", null, b.version(0, 1, 0));
         inline for ([_][]const u8{
-            "pz",
+            "pz", "thread", "node"
         }) |c_source| {
             lib.addCSourceFile("./lib/pz/src/" ++ c_source ++ ".c", &[_][]const u8{
                 "-Wall", "-Wpedantic", "-std=c11",

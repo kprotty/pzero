@@ -92,6 +92,8 @@
         #define PZ_UNREACHABLE() /* nothing */
     #endif
 
+    #define PZ_UNREFERENCED_PARAMETER(x) ((void)(x))
+
     // Alignment
     #if defined(PZ_CPP)
         #define PZ_ALIGN(n) alignas(n)
