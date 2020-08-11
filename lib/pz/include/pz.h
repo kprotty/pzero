@@ -15,47 +15,12 @@
 
 #ifndef PZ_H
 #define PZ_H
-    #ifdef __cplusplus
+    #if defined(PZ_CPP)
     extern "C" {
     #endif
 
-    // if defined(PZ_LINKED_STATIC) then using/building pz from a statically linked object
-    // if defined(PZ_LINKED_SHARED) then using pz from a dynamically linked object
-    // if neither defined, then building pz as a dynamically linked object
-
-    #if defined(PZ_LINKED_STATIC) && defined(PZ_LINKED_SHARED)
-        #error "Define either PZ_LINKED_STATIC or PZ_LINKED_SHARED, not both"
-    #endif
-
-    #if defined(_WIN32)
-        #if defined(PZ_LINKED_STATIC)
-        #define PZ_EXTERN /* nothing */
-        #elif defined(PZ_LINKED_SHARED)
-        #define PZ_EXTERN __declspec(dllimport)
-        #else
-        #define PZ_EXTERN __declspec(dllexport)
-        #endif
-    #elif __GNUC__ >= 4
-        #define PZ_EXTERN __attribute__((visibility("default")))
-    #else
-        #define PZ_EXTERN /* nothing */
-    #endif
-
-    #if defined(__cplusplus)
-        #include <cstddef>
-        #include <cstdint>
-    #else
-        #include <stddef.h>
-        #include <stdint.h>
-        #include <stdbool.h>
-    #endif
-
-    #if !defined(__GNUC__) || (__GNUC__ < 2) || (__GNUC == 2 && __GNUC_MINOR__ < 96)
-        #define __builtin_expect(x, expected) (x)
-    #endif
-    #define PZ_INLINE __inline__
-    #define PZ_LIKELY(x) __builtin_expect((x), true)
-    #define PZ_UNLIKELY(x) __builtin_expect((x), false)
+    #include "base.h"
+    #include "atomic.h"
 
     ////////////////////////////////////////////////////////////////////
 
@@ -156,16 +121,14 @@
         return iter;   
     }
 
-    /*
-
     #define PZ_TASK_BUFFER_SIZE 256
 
     struct PzTaskThread {
-        uintptr_t ptr;
-        size_t runq_head;
-        size_t runq_tail;
-        uintptr_t runq_next;
-        PzTask* runq_buffer[PZ_TASK_BUFFER_SIZE];
+        PzAtomicPtr runq_head;
+        PzAtomicPtr runq_tail;
+        PzAtomicPtr runq_overflow;
+        PZ_CACHE_ALIGN PzTask* runq_buffer[PZ_TASK_BUFFER_SIZE];
+        PzTaskNode* node;
     };
 
     PZ_EXTERN void PzTaskThreadInit(
@@ -176,6 +139,10 @@
     PZ_EXTERN void PzTaskThreadDestroy(
         PzTaskThread* self
     );
+
+    static PZ_INLINE PzTaskNode* PzTaskThreadGetNode(PzTaskThread* self) {
+        return self->node;
+    }
 
     typedef struct PzTaskSchedulePtr {
         uintptr_t ptr;
@@ -188,50 +155,50 @@
     } PZ_TASK_SCHED_PTR_TYPE;
 
     static PZ_INLINE PZ_TASK_SCHED_PTR_TYPE PzTaskSchedulePtrGetType(PzTaskSchedulePtr self) {
-        return self.ptr & 0b11;
+        return self.ptr & 3;
     }
 
-    static PZ_INLINE PzTaskWorker* PzTaskSchedulePtrGetWorker(PzTaskSchedulePtr self) {
-        if (PZ_LIKELY(PzTaskSchedulePtrGetType(self) == PZ_TASK_SCHED_PTR_SPAWN))
-            return ((PzTaskWorker*)(self.ptr & ~((uintptr_t) 0b11)));
-        return NULL;
+    static PZ_INLINE uintptr_t PzTaskSchedulePtrGetPtr(PzTaskSchedulePtr self) {
+        return self.ptr & ~((uintptr_t) 3);
     }
-
-    static PZ_INLINE PzTaskThread* PzTaskSchedulePtrGetThread(PzTaskSchedulePtr self) {
-        if (PZ_LIKELY(PzTaskSchedulePtrGetType(self) == PZ_TASK_SCHED_PTR_RESUME))
-            return ((PzTaskThread*)(self.ptr & ~((uintptr_t) 0b11)));
-        return NULL;
-    }
-
-    typedef enum PZ_TASK_SCHED_TYPE {
-        PZ_TASK_SCHED_FIFO = 0,
-        PZ_TASK_SCHED_LIFO = 1,
-        PZ_TASK_SCHED_UNBUFFERED = 2,
-    } PZ_TASK_SCHED_TYPE;
 
     PZ_EXTERN PzTaskSchedulePtr PzTaskThreadSchedule(
         PzTaskThread* self,
-        PzTaskBatch batch,
-        PZ_TASK_SCHED_TYPE sched_type,
-        uintptr_t sched_ptr
+        PzTaskBatch batch
     );
 
+    typedef struct PzTaskPollPtr {
+        uintptr_t ptr;
+    } PzTaskPollPtr;
+
     typedef enum PZ_TASK_POLL_TYPE {
-        PZ_TASK_POLL_SELF = (1 << 0),
-        PZ_TASK_POLL_NODE = (1 << 1),
-        PZ_TASK_POLL_THREAD = (1 << 2),
+        PZ_TASK_POLL_THREAD = 0,
+        PZ_TASK_POLL_NODE = 1
     } PZ_TASK_POLL_TYPE;
+
+    static PZ_INLINE PzTaskPollPtr PzTaskPollPtrInit(PZ_TASK_POLL_TYPE poll_type, uintptr_t ptr) {
+        PzTaskPollPtr self = { ptr | poll_type };
+        return self;
+    }
+
+    static PZ_INLINE PZ_TASK_POLL_TYPE PzTaskPollPtrGetType(PzTaskPollPtr self) {
+        return (PZ_TASK_POLL_TYPE)(self.ptr & 1);
+    }
+
+    static PZ_INLINE uintptr_t PzTaskPollPtrGetPtr(PzTaskPollPtr self) {
+        return self.ptr & ~((uintptr_t)1);
+    }
 
     PZ_EXTERN PzTask* PzTaskThreadPoll(
         PzTaskThread* self,
-        PZ_TASK_POLL_TYPE poll_type,
-        uintptr_t poll_ptr
+        PzTaskPollPtr poll_ptr
     );
 
     typedef enum PZ_TASK_SUSPEND_STATUS {
-        PZ_TASK_SUSPEND_NOTIFIED = (1 << 0),
-        PZ_TASK_SUSPEND_LAST_IN_NODE = (1 << 0),
-        PZ_TASK_SUSPEND_LAST_IN_SCHED = (1 << 1)
+        PZ_TASK_SUSPEND_WAIT = (1 << 0),
+        PZ_TASK_SUSPEND_NOTIFIED = (1 << 1),
+        PZ_TASK_SUSPEND_LAST_IN_NODE = (1 << 2),
+        PZ_TASK_SUSPEND_LAST_IN_SCHED = (1 << 3)
     } PZ_TASK_SUSPEND_STATUS;
 
     PZ_EXTERN PZ_TASK_SUSPEND_STATUS PzTaskThreadSuspend(
@@ -239,7 +206,16 @@
     );
 
     struct PzTaskWorker {
-        uintptr_t ptr;
+        PzAtomicPtr ptr;
+    };
+
+    struct PzTaskNode {
+        PzTaskNode* next;
+        size_t num_workers;
+        PzTaskWorker* workers;
+        PzTaskScheduler* scheduler;
+        PZ_CACHE_ALIGN PzAtomicPtr idle_queue;
+        PZ_CACHE_ALIGN PzAtomicPtr active_workers;
     };
 
     struct PzTaskNodeIter {
@@ -257,43 +233,49 @@
         return node;
     }
 
-    struct PzTaskNode {
-        PzTaskNode* next;
-        size_t num_workers;
-        PzTaskWorker[] workers;
-        uintptr_t idle_queue;
-        size_t active_workers;
-    };
+    static PZ_INLINE PzTaskNodeIter PzTaskNodeGetClusterIter(PzTaskNode* self) {
+        PzTaskNodeIter iter;
+        iter.start = self;
+        iter.current = self;
+        return iter;
+    }
 
     static PZ_INLINE size_t PzTaskNodeGetWorkersLen(PzTaskNode* self) {
         return self->num_workers;
     }
 
-    static PZ_INLINE PzTaskWorker[] PzTaskNodeGetWorkersPtr(PzTaskNode* self) {
+    static PZ_INLINE PzTaskWorker* PzTaskNodeGetWorkersPtr(PzTaskNode* self) {
         return self->workers;
     }
 
-    static PZ_INLINE PzTaskNodeIter PzTaskNodeGetClusterIter(PzTaskNode* self) {
-        return ((PzTaskNodeIter)({
-            .start = self,
-            .current = self
-        }));
+    static PZ_INLINE PzTaskScheduler* PzTaskNodeGetScheduler(PzTaskNode* self) {
+        return self->scheduler;
     }
 
     typedef enum PZ_TASK_RESUME_TYPE {
         PZ_TASK_RESUME_WAKING = (1 << 0),
         PZ_TASK_RESUME_ON_NODE = (1 << 1),
         PZ_TASK_RESUME_ON_SCHED = (1 << 2)
-
     } PZ_TASK_RESUME_TYPE;
 
     typedef struct PzTaskResumeResult {
-        PZ_TASK_RESUME_TYPE type;
-        PzTaskNode* node;
-        PzTaskSchedulePtr ptr;
+        uintptr_t node_type;
+        PzTaskSchedulePtr sched_ptr;
     } PzTaskResumeResult;
 
-    PZ_EXTERN void PzTaskNodeResume(
+    static PZ_INLINE PZ_TASK_RESUME_TYPE PzTaskResumeResultGetType(PzTaskResumeResult* self) {
+        return self->node_type & 7;
+    }
+
+    static PZ_INLINE PzTaskNode* PzTaskResumeResultGetNode(PzTaskResumeResult* self) {
+        return (PzTaskNode*)(self->node_type & ~((uintptr_t) 7));
+    }
+
+    static PZ_INLINE PzTaskSchedulePtr PzTaskResumeResultGetSchedulePtr(PzTaskResumeResult* self) {
+        return self->sched_ptr;
+    }
+
+    PZ_EXTERN bool PzTaskNodeResume(
         PzTaskNode* self,
         PzTaskResumeResult* result_ptr
     );
@@ -304,26 +286,17 @@
     );
 
     struct PzTaskCluster {
-        PzNode* head;
-        PzNode* tail;
+        PzTaskNode* head;
+        PzTaskNode* tail;
     };
 
-    #define PZ_TASK_CLUSTER_INIT    \
-        ((PzTaskCluster)({          \
-            .head = NULL,           \
-            .tail = NULL            \
-        }))
-
-    static PZ_INLINE void PzTaskClusterInit(PzTaskCluster* self) {
-        *self = PZ_TASK_CLUSTER_INIT;
-    }
-
-    static PZ_INLINE PzTaskCluster PzTaskClusterFromNode(PzTaskNode* node) {
-        node->next = node;
-        return ((PzTaskCluster)({
-            .head = node,
-            .tail = node
-        }));
+    static PZ_INLINE PzTaskCluster PzTaskClusterInit(PzTaskNode* node) {
+        if (node != NULL)
+            node->next = node;
+        PzTaskCluster self;
+        self.head = node;
+        self.tail = node;
+        return self;
     }
 
     static PZ_INLINE void PzTaskClusterPushFrontMany(PzTaskCluster* self, PzTaskCluster cluster) {
@@ -333,7 +306,7 @@
             *self = cluster;
         } else {
             cluster.tail->next = self->head;
-            self->head = cluster->head;
+            self->head = cluster.head;
             self->tail->next = self->head;
         }
     }
@@ -362,11 +335,11 @@
     }
 
     static PZ_INLINE void PzTaskClusterPushFront(PzTaskCluster* self, PzTaskNode* node) {
-        PzTaskClusterPushFrontMany(self, PzTaskClusterFromNode(node));
+        PzTaskClusterPushFrontMany(self, PzTaskClusterInit(node));
     }
 
     static PZ_INLINE void PzTaskClusterPushBack(PzTaskCluster* self, PzTaskNode* node) {
-        PzTaskClusterPushBackMany(self, PzTaskClusterFromNode(node));
+        PzTaskClusterPushBackMany(self, PzTaskClusterInit(node));
     }
 
     static PZ_INLINE void PzTaskClusterPush(PzTaskCluster* self, PzTaskNode* node) {
@@ -374,30 +347,24 @@
     }
 
     static PZ_INLINE PzTaskNode* PzTaskClusterPop(PzTaskCluster* self) {
-        PzTaskClusterPopFront(self);
+        return PzTaskClusterPopFront(self);
     }
 
     static PZ_INLINE PzTaskNodeIter PzTaskClusterGetIter(PzTaskCluster* self) {
-        return ((PzTaskNodeIter)({
-            .start = self->head,
-            .current = self->head
-        }));   
+        PzTaskNodeIter iter;
+        iter.start = self->head;
+        iter.current = iter.start;
+        return iter;
     }
 
     struct PzTaskScheduler {
-        size_t active_nodes;
         PzTaskNode* start_node;
+        PzAtomicPtr active_nodes;
     };
-
-    PZ_EXTERN PZ_TASK_SCHED_INIT_STATUS PzTaskSchedulerInit(
-        PzTaskScheduler* self,
-        PzTaskCluster cluster
-    );
-    */
 
     ////////////////////////////////////////////////////////////////////
 
-    #ifdef __cplusplus
+    #if defined(PZ_CPP)
     }
     #endif
 #endif // PZ_H

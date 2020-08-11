@@ -24,9 +24,6 @@
     typedef uint32_t DWORD;
     typedef void* PVOID;
     typedef PVOID HANDLE;
-    typedef HANDLE HMODULE;
     typedef HANDLE HINSTANCE;
-
-    #define WINAPI extern "C" PZ_EXTERN 
 
 #endif // PZ_WINDOWS_H
