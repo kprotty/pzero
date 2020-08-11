@@ -11,7 +11,7 @@ pub fn build(b: *std.build.Builder) void {
             "pz", "thread", "node"
         }) |c_source| {
             lib.addCSourceFile("./lib/pz/src/" ++ c_source ++ ".c", &[_][]const u8{
-                "-Wall", "-Wpedantic", "-std=c11",
+                "-Wall", "-Wpedantic", "-std=c11", "-nostdlib"
             });
         }
 

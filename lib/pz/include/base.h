@@ -68,9 +68,11 @@
 
     // Include non-OS related typing headers
     #if defined(PZ_CPP)
+        #include <cstdarg>
         #include <cstddef>
         #include <cstdint>
     #else
+        #include <stdarg.h>
         #include <stddef.h>
         #include <stdint.h>
         #include <stdbool.h>
@@ -92,7 +94,15 @@
         #define PZ_UNREACHABLE() /* nothing */
     #endif
 
+    #if defined(PZ_MSVC)
+        #define PZ_STATIC_ASSERT(x) static_assert(x)
+    #else
+        #define PZ_STATIC_ASSERT(x) _Static_assert(x)
+    #endif
+
     #define PZ_UNREFERENCED_PARAMETER(x) ((void)(x))
+    #define PZ_WRAPPING_ADD(x, y) ((x) + (y))
+    #define PZ_WRAPPING_SUB(x, y) ((x) - (y))
 
     // Alignment
     #if defined(PZ_CPP)
@@ -103,5 +113,19 @@
 
     // Type prefix to align to the cpu's cache line to avoid false sharing on atomics
     #define PZ_CACHE_ALIGN PZ_ALIGN(64)
+
+    // Panicking
+    typedef void (*PzPanicHandler)(
+        const char* file,
+        int line_no,
+        const char* fmt,
+        va_list args);
+    
+    PZ_EXTERN void PzSetPanicHandler(PzPanicHandler panic_handler);
+
+    PZ_EXTERN void PzCallPanicHandler(const char* file, int line_no, const char* fmt, ...);
+
+    #define PzPanic(...) \
+        (*PzCallPanicHandler)(__FILE__, __LINE__, __VA_ARGS__)
 
 #endif

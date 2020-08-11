@@ -15,6 +15,31 @@
 
 #include "pz.h"
 
+PzPanicHandler __pz_panic_handler = NULL;
+
+PZ_EXTERN void PzSetPanicHandler(PzPanicHandler panic_handler) {
+    __pz_panic_handler = panic_handler;
+}
+
+PZ_EXTERN void PzCallPanicHandler(const char* file, int line_no, const char* fmt, ...) {
+    PzPanicHandler panic_handler = __pz_panic_handler;
+
+    if (PZ_UNLIKELY(panic_handler == NULL)) {
+        #if defined(PZ_GCC)
+            __builtin_trap();
+        #else
+            while (true) {}
+        #endif
+    }
+    
+    va_list args;
+    va_start(args, fmt);
+    (panic_handler)(file, line_no, fmt, args);
+    va_end(args);
+
+    PZ_UNREACHABLE();
+}
+
 #if defined(_WIN32)
     #include "windows.h"
     #if defined(__cplusplus)

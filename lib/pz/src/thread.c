@@ -17,14 +17,14 @@ void PzTaskThreadDestroy(PzTaskThread* self) {
     return;
 }
 
-PzTaskSchedulePtr PzTaskThreadSchedule(PzTaskThread* self, PzTaskBatch batch) {
+void PzTaskThreadSchedule(PzTaskThread* self, PzTaskBatch batch, PzTaskResumeResult* resume_ptr) {
     PZ_UNREFERENCED_PARAMETER(self);
     PZ_UNREFERENCED_PARAMETER(batch);
-    
+    PZ_UNREFERENCED_PARAMETER(resume_ptr);
+
     // TODO
 
-    PzTaskSchedulePtr ptr = {0};
-    return ptr;
+    return;
 }
 
 PzTask* PzTaskThreadPoll(PzTaskThread* self, PzTaskPollPtr poll_ptr) {
@@ -39,5 +39,6 @@ PzTask* PzTaskThreadPoll(PzTaskThread* self, PzTaskPollPtr poll_ptr) {
 PZ_TASK_SUSPEND_STATUS PzTaskNodeSuspend(PzTaskNode* self, PzTaskThread* thread);
 
 PZ_TASK_SUSPEND_STATUS PzTaskThreadSuspend(PzTaskThread* self) {
-    return PzTaskNodeSuspend(PzTaskThreadGetNode(self), self);
+    PzTaskNode* node = PzTaskThreadGetNode(self);
+    return PzTaskNodeSuspend(node, self);
 }

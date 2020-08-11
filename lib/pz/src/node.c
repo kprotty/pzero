@@ -18,13 +18,13 @@ void PzTaskNodeDestroy(PzTaskNode* self) {
     return;
 }
 
-bool PzTaskNodeResume(PzTaskNode* self, PzTaskResumeResult* result_ptr) {
+void PzTaskNodeResume(PzTaskNode* self, PzTaskResumeResult* result_ptr) {
     PZ_UNREFERENCED_PARAMETER(self);
     PZ_UNREFERENCED_PARAMETER(result_ptr);
     
     // TODO
 
-    return false;
+    return;
 }
 
 void PzTaskNodeUndoResume(PzTaskNode* self, PzTaskResumeResult* result_ptr) {

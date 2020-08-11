@@ -17,38 +17,21 @@
 #define PZ_ATOMIC_H
 
     #include "base.h"
+    #if UINTPTR_MAX != SIZE_MAX
+        #error "Pz only supported on platforms with pointer-width atomics"
+    #endif
 
-    #if defined(_MSC_VER) && !defined(__clang__)
-        typedef volatile void* PzAtomicPtr;
-
-        static PZ_INLINE uintptr_t PzAtomicLoad(const PzAtomicPtr* ptr) {
-
-        }
-
-        static PZ_INLINE uintptr_t PzAtomicLoadAcquire(const PzAtomicPtr* ptr) {
-            
-        }
-
-        static PZ_INLINE uintptr_t PzAtomicStore(PzAtomicPtr ptr, uintptr_t value) {
-            
-        }
-
-        static PZ_INLINE uintptr_t PzAtomicStoreRelease(PzAtomicPtr ptr, uintptr_t value) {
-            
-        }
-
-        static PZ_INLINE bool PzAtomicCasAcquire(PzAtomicPtr ptr, uintptr_t* cmp, uintptr_t xchg) {
-            
-        }
-
-        static PZ_INLINE bool PzAtomicCasRelease(PzAtomicPtr ptr, uintptr_t* cmp, uintptr_t xchg) {
-            
-        }
+    #if defined(PZ_MSVC)
+        #error "Atomic definitions for MSVC not implemented yet"
 
     #else
         #include <stdatomic.h>
 
         typedef _Atomic(uintptr_t) PzAtomicPtr;
+
+        static PZ_INLINE uintptr_t PzAtomicLoad(const PzAtomicPtr* ptr) {
+            return atomic_load_explicit(ptr, memory_order_relaxed);
+        }
 
     #endif
 
