@@ -1,20 +1,54 @@
 #include "pz.h"
+#include "worker.h"
 
 void PzTaskThreadInit(PzTaskThread* self, PzTaskWorker* worker) {
-    PZ_UNREFERENCED_PARAMETER(self);
-    PZ_UNREFERENCED_PARAMETER(worker);
+    PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
+    PzDebugAssert(worker != NULL, "invalid PzTaskWorker ptr");
 
-    // TODO
+    // get the PzTaskNode* from the worker ptr
+    PzTaskNode* node;
+    uintptr_t worker_ptr = PzAtomicLoadAcquire(&worker->ptr);
+    switch (PzTaskWorkerGetType(worker_ptr)) {
+        case PZ_TASK_WORKER_SPAWNING: {
+            node = (PzTaskNode*) PzTaskWorkerGetPtr(worker_ptr);
+            break;
+        }
+        case PZ_TASK_WORKER_IDLE: {
+            PzPanic("initialized with an idle worker");
+            return;
+        }
+        case PZ_TASK_WORKER_RUNNING: {
+            PzPanic("initialized with a worker already associated with another thread");
+            return;
+        }
+        case PZ_TASK_WORKER_SHUTDOWN: {
+            PzPanic("initialized with a worker which was already shutdown");
+            return;
+        }
+    }
 
-    return;
+    // initialize the PzTaskThread*
+    self->runq_head = 0;
+    self->runq_tail = 0;
+    self->runq_overflow = (uintptr_t)NULL;
+    self->ptr = (uintptr_t)worker;
+    self->node = node;
+
+    // update the PzTaskWorker ptr with the new initialized PzTaskThread*.
+    // release barrier so that other threads see the PzTaskThread writes above.
+    worker_ptr = PzTaskWorkerInit(PZ_TASK_WORKER_RUNNING, (uintptr_t)self);
+    PzAtomicStoreRelease(&worker->ptr, worker_ptr);
 }
 
 void PzTaskThreadDestroy(PzTaskThread* self) {
-    PZ_UNREFERENCED_PARAMETER(self);
+    // make sure the local runq buffer is empty
+    uintptr_t tail = self->runq_tail;
+    uintptr_t head = PzAtomicLoad(&self->runq_head);
+    PzAssert(tail == head, "non empty run queue size of %zu", PZ_WRAPPING_SUB(tail, head));
 
-    // TODO
-
-    return;
+    // make sure the local runq overflow stack is empty
+    uintptr_t overflow = PzAtomicLoad(&self->runq_overflow);
+    PzAssert(overflow == (uintptr_t)NULL, "non empty run queue overflow");
 }
 
 bool PzTaskThreadIsEmpty(PzTaskThread* self) {

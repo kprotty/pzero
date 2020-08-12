@@ -136,8 +136,8 @@
         PzAtomicPtr runq_tail;
         PzAtomicPtr runq_overflow;
         PZ_CACHE_ALIGN PzAtomicPtr runq_buffer[PZ_TASK_BUFFER_SIZE];
+        PzAtomicPtr ptr;
         PzTaskNode* node;
-        uintptr_t ptr;
     };
 
     PZ_EXTERN void PzTaskThreadInit(
