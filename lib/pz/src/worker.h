@@ -11,7 +11,7 @@
     } PZ_TASK_WORKER_TYPE;
 
     static PZ_INLINE uintptr_t PzTaskWorkerInit(PZ_TASK_WORKER_TYPE ptr_type, uintptr_t ptr) {
-        PzDebugAssert(ptr & 3 == 0, "misaligned worker ptr");
+        PzDebugAssert((ptr & 3) == 0, "misaligned worker ptr");
         return ptr | ptr_type;
     }
 

@@ -94,7 +94,6 @@ static PZ_INLINE PzTask* PzTaskThreadBufferRead(PzTaskThread* self, uintptr_t in
 /// This should ideally be followed by a call to PzTaskNodeResume() to wake up a thread to handle the newly submitted tasks.
 void PzTaskThreadPush(PzTaskThread* self, PzTaskBatch batch) {
     PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
-    PzDebugAssert(resume_ptr != NULL, "invalid PzTaskResumeResult ptr");
 
     // Load the head and tail of the queue in order to add to its ring runq_buffer.
     // The tail can be loaded without synchronization as we should be the only producer thread.
@@ -392,25 +391,39 @@ PzTask* PzTaskThreadPollSteal(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTaskT
     return NULL;
 }
 
-PzTask* PzTaskThreadPoll(PzTaskThread* self, PzTaskPollPtr poll_ptr) {
+PzTask* PzTaskThreadPoll(PzTaskThread* self, PzTaskPollPtr poll_ptr, PzTaskResumeResult* result) {
+    PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
+    PzDebugAssert(result != NULL, "invalid PzTaskResumeResult ptr");
+
+    PzTask* task = NULL;
+    bool is_remote = false;
+
+    // search for a task  using the poll_ptr type
     switch (PzTaskPollPtrGetType(poll_ptr)) {
         case PZ_TASK_POLL_THREAD: {
             PzTaskThread* thread = (PzTaskThread*) PzTaskPollPtrGetPtr(poll_ptr);
-            if (thread == self)
-                return PzTaskThreadPollLocal(self);
-            return PzTaskThreadPollSteal(self, thread);
+            is_remote = thread != self;
+            task = is_remote ? PzTaskThreadPollSteal(self, thread) : PzTaskThreadPollLocal(self);
+            break;
         }
 
         case PZ_TASK_POLL_NODE: {
             PzTaskNode* node = (PzTaskNode*) PzTaskPollPtrGetPtr(poll_ptr);
-            return PzTaskThreadPollGlobal(self, node);
-        }
-
-        default: {
-            PZ_UNREACHABLE();
-            return NULL;
+            is_remote = true;
+            task = PzTaskThreadPollGlobal(self, node);
+            break;
         }
     }
+
+    // if we found a task 
+    PzTaskResumeResult none = { 0 };
+    *result = none;
+    if (task != NULL && is_remote) {
+        PzTaskNode* node = PzTaskThreadGetNode(self);
+        PzTaskNodeResumeAnyThread(node, result, is_waking);
+    }
+
+    return task;
 }
 
 PZ_TASK_SUSPEND_STATUS PzTaskNodeSuspend(PzTaskNode* self, PzTaskThread* thread);

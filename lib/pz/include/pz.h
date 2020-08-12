@@ -129,82 +129,12 @@
         return iter;   
     }
 
-    #define PZ_TASK_BUFFER_SIZE 256
-
-    struct PzTaskThread {
-        PzAtomicPtr runq_head;
-        PzAtomicPtr runq_tail;
-        PzAtomicPtr runq_overflow;
-        PZ_CACHE_ALIGN PzAtomicPtr runq_buffer[PZ_TASK_BUFFER_SIZE];
-        PzAtomicPtr ptr;
-        PzTaskNode* node;
-    };
-
-    PZ_EXTERN void PzTaskThreadInit(
-        PzTaskThread* self,
-        PzTaskWorker* worker
-    );
-
-    PZ_EXTERN void PzTaskThreadDestroy(
-        PzTaskThread* self
-    );
-
-    static PZ_INLINE PzTaskNode* PzTaskThreadGetNode(PzTaskThread* self) {
-        return self->node;
-    }
-
-    PZ_EXTERN bool PzTaskThreadIsEmpty(
-        PzTaskThread* self
-    );
-
-    PZ_EXTERN void PzTaskThreadPush(
-        PzTaskThread* self,
-        PzTaskBatch batch
-    );
-
-    typedef struct PzTaskPollPtr {
-        uintptr_t ptr;
-    } PzTaskPollPtr;
-
-    typedef enum PZ_TASK_POLL_TYPE {
-        PZ_TASK_POLL_THREAD = 0,
-        PZ_TASK_POLL_NODE = 1
-    } PZ_TASK_POLL_TYPE;
-
-    static PZ_INLINE PzTaskPollPtr PzTaskPollPtrInit(PZ_TASK_POLL_TYPE poll_type, uintptr_t ptr) {
-        PzTaskPollPtr self = { ptr | poll_type };
-        return self;
-    }
-
-    static PZ_INLINE PZ_TASK_POLL_TYPE PzTaskPollPtrGetType(PzTaskPollPtr self) {
-        return (PZ_TASK_POLL_TYPE)(self.ptr & 1);
-    }
-
-    static PZ_INLINE uintptr_t PzTaskPollPtrGetPtr(PzTaskPollPtr self) {
-        return self.ptr & ~((uintptr_t)1);
-    }
-
-    PZ_EXTERN PzTask* PzTaskThreadPoll(
-        PzTaskThread* self,
-        PzTaskPollPtr poll_ptr
-    );
-
-    typedef enum PZ_TASK_SUSPEND_STATUS {
-        PZ_TASK_SUSPEND_WAIT = (1 << 0),
-        PZ_TASK_SUSPEND_NOTIFIED = (1 << 1),
-        PZ_TASK_SUSPEND_LAST_IN_NODE = (1 << 2),
-        PZ_TASK_SUSPEND_LAST_IN_SCHED = (1 << 3)
-    } PZ_TASK_SUSPEND_STATUS;
-
-    PZ_EXTERN PZ_TASK_SUSPEND_STATUS PzTaskThreadSuspend(
-        PzTaskThread* self
-    );
-
     struct PzTaskWorker {
         PzAtomicPtr ptr;
     };
 
     typedef uint16_t PzTaskWorkerCount;
+    typedef PzTaskWorkerCount PzTaskWorkerIndex;
 
     struct PzTaskNode {
         PzTaskNode* next;
@@ -314,6 +244,78 @@
     PZ_EXTERN void PzTaskNodeUndoResume(
         PzTaskNode* self,
         PzTaskResumeResult* result_ptr
+    );
+
+    #define PZ_TASK_BUFFER_SIZE 256
+
+    struct PzTaskThread {
+        PzAtomicPtr runq_head;
+        PzAtomicPtr runq_tail;
+        PzAtomicPtr runq_overflow;
+        PZ_CACHE_ALIGN PzAtomicPtr runq_buffer[PZ_TASK_BUFFER_SIZE];
+        PzAtomicPtr ptr;
+        PzTaskNode* node;
+    };
+
+    PZ_EXTERN void PzTaskThreadInit(
+        PzTaskThread* self,
+        PzTaskWorker* worker
+    );
+
+    PZ_EXTERN void PzTaskThreadDestroy(
+        PzTaskThread* self
+    );
+
+    static PZ_INLINE PzTaskNode* PzTaskThreadGetNode(PzTaskThread* self) {
+        return self->node;
+    }
+
+    PZ_EXTERN bool PzTaskThreadIsEmpty(
+        PzTaskThread* self
+    );
+
+    PZ_EXTERN void PzTaskThreadPush(
+        PzTaskThread* self,
+        PzTaskBatch batch
+    );
+
+    typedef struct PzTaskPollPtr {
+        uintptr_t ptr;
+    } PzTaskPollPtr;
+
+    typedef enum PZ_TASK_POLL_TYPE {
+        PZ_TASK_POLL_THREAD = 0,
+        PZ_TASK_POLL_NODE = 1
+    } PZ_TASK_POLL_TYPE;
+
+    static PZ_INLINE PzTaskPollPtr PzTaskPollPtrInit(PZ_TASK_POLL_TYPE poll_type, uintptr_t ptr) {
+        PzTaskPollPtr self = { ptr | poll_type };
+        return self;
+    }
+
+    static PZ_INLINE PZ_TASK_POLL_TYPE PzTaskPollPtrGetType(PzTaskPollPtr self) {
+        return (PZ_TASK_POLL_TYPE)(self.ptr & 1);
+    }
+
+    static PZ_INLINE uintptr_t PzTaskPollPtrGetPtr(PzTaskPollPtr self) {
+        return self.ptr & ~((uintptr_t)1);
+    }
+
+    PZ_EXTERN PzTask* PzTaskThreadPoll(
+        PzTaskThread* self,
+        PzTaskPollPtr poll_ptr,
+        PzTaskResumeResult* resume_ptr
+    );
+
+    typedef enum PZ_TASK_SUSPEND_STATUS {
+        PZ_TASK_SUSPEND_WAIT = (1 << 0),
+        PZ_TASK_SUSPEND_NOTIFIED = (1 << 1),
+        PZ_TASK_SUSPEND_LAST_IN_NODE = (1 << 2),
+        PZ_TASK_SUSPEND_LAST_IN_SCHED = (1 << 3)
+    } PZ_TASK_SUSPEND_STATUS;
+
+    PZ_EXTERN PZ_TASK_SUSPEND_STATUS PzTaskThreadSuspend(
+        PzTaskThread* self
     );
 
     struct PzTaskCluster {
