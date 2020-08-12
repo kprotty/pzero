@@ -33,7 +33,11 @@
     typedef struct PzTaskNodeIter PzTaskNodeIter;
     typedef struct PzTaskCluster PzTaskCluster;
     typedef struct PzTaskScheduler PzTaskScheduler;
-    typedef void (*PzTaskCallback)(PzTask*, PzTaskThread*);
+
+    typedef void* (*PzTaskCallback)(
+        PzTask* self,
+        PzTaskThread* caller_thread
+    );
 
     struct PzTask {
         PzTask* next;
@@ -149,6 +153,10 @@
         return self->node;
     }
 
+    PZ_EXTERN bool PzTaskThreadIsEmpty(
+        PzTaskThread* self
+    );
+
     PZ_EXTERN void PzTaskThreadPush(
         PzTaskThread* self,
         PzTaskBatch batch
@@ -203,6 +211,7 @@
         PzTaskWorker* workers;
         PzTaskWorkerCount num_workers;
         PzTaskScheduler* scheduler;
+        PZ_CACHE_ALIGN PzAtomicPtr runq;
         PZ_CACHE_ALIGN PzAtomicPtr idle_queue;
         PZ_CACHE_ALIGN PzAtomicPtr active_workers;
     };

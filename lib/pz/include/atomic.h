@@ -18,20 +18,34 @@
 
     #include "base.h"
     #if UINTPTR_MAX != SIZE_MAX
-        #error "Pz only supported on platforms with pointer-width atomics"
+        #error "Platforms without pointer-width atomics are not supported."
     #endif
 
     #if defined(PZ_MSVC)
-        #error "Atomic definitions for MSVC not implemented yet"
+        #error "Atomic definitions for MSVC not implemented yet."
 
     #else
         #include <stdatomic.h>
 
+        #if defined(PZ_X86)
+            #define PzYieldHardwareThread() __asm__ __volatile__("pause")
+        #elif defined(PZ_ARM)
+            #define PzYieldHardwareThread() __asm__ __volatile__("yield")
+        #else
+            #warning "PzYieldHardwareThread() is not supported on this OS."
+            #define PzYieldHardwareThread() ((void)0)
+        #endif
+
         typedef _Atomic(uintptr_t) PzAtomicPtr;
 
-        /// Equivalent to LLVM atomic load with monotonic memory ordering
+        /// Equivalent to LLVM atomic load with Monotonic memory ordering
         static PZ_INLINE uintptr_t PzAtomicLoad(const PzAtomicPtr* ptr) {
             return atomic_load_explicit(ptr, memory_order_relaxed);
+        }
+
+        /// Equivalent to LLVM atomic load with Acquire memory ordering
+        static PZ_INLINE uintptr_t PzAtomicLoadAcquire(const PzAtomicPtr* ptr) {
+            return atomic_load_explicit(ptr, memory_order_acquire);
         }
 
         /// Equivalent to LLVM atomic load with Unordered memory ordering
@@ -43,12 +57,12 @@
             #endif
         }
 
-        /// Equivalent to LLVM atomic store with monotonic memory ordering
+        /// Equivalent to LLVM atomic store with Monotonic memory ordering
         static PZ_INLINE void PzAtomicStore(PzAtomicPtr* ptr, uintptr_t value) {
             atomic_store_explicit(ptr, value, memory_order_relaxed);
         }
 
-        /// Equivalent to LLVM atomic store with release memory ordering
+        /// Equivalent to LLVM atomic store with Release memory ordering
         static PZ_INLINE void PzAtomicStoreRelease(PzAtomicPtr* ptr, uintptr_t value) {
             atomic_store_explicit(ptr, value, memory_order_release);
         }

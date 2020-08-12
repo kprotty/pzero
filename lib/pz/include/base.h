@@ -94,10 +94,21 @@
         #define PZ_UNREACHABLE() /* nothing */
     #endif
 
+    #define PZ_ASSUME(cond) \
+        if (PZ_UNLIKELY(!(cond))) PZ_UNREACHABLE()
+
     #if defined(PZ_MSVC)
         #define PZ_STATIC_ASSERT(x) static_assert(x)
     #else
         #define PZ_STATIC_ASSERT(x) _Static_assert(x)
+    #endif
+
+    #if defined(PZ_MSVC)
+        #define PZ_NOALIAS(T) T __restrict
+    #elif defined(PZ_GCC)
+        #define PZ_NOALIAS(T) T __restrict__
+    #else
+        #define PZ_NOALIAS(T) T
     #endif
 
     #define PZ_UNREFERENCED_PARAMETER(x) ((void)(x))
@@ -131,6 +142,10 @@
     // Asserts
     #define PzAssert(cond, ...) \
         (PZ_UNLIKELY(cond) ? (PzCallPanicHandler(__FILE__, __LINE__, __VA_ARGS__),false) : true)
+
+    #if !defined(PZ_DEBUG) && defined(NDEBUG)
+        #define PZ_DEBUG
+    #endif
 
     #if defined(PZ_DEBUG)
         #define PzDebugAssert(cond, ...) \
