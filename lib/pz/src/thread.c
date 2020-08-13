@@ -1,7 +1,13 @@
 #include "pz.h"
 #include "worker.h"
 
-void PzTaskThreadInit(PzTaskThread* self, PzTaskWorker* worker) {
+#define PTR_TYPE_IDLE (1 << 1)
+#define PTR_TYPE_WAKING (1 << 0)
+
+void PzTaskThreadInit(
+    PZ_NOALIAS(PzTaskThread*) self,
+    PZ_NOALIAS(PzTaskWorker*) worker
+) {
     PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
     PzDebugAssert(worker != NULL, "invalid PzTaskWorker ptr");
 
@@ -27,12 +33,12 @@ void PzTaskThreadInit(PzTaskThread* self, PzTaskWorker* worker) {
         }
     }
 
-    // initialize the PzTaskThread*
+    // initialize the PzTaskThread* with it starting off waking
     self->runq_head = 0;
     self->runq_tail = 0;
     self->runq_overflow = (uintptr_t)NULL;
-    self->ptr = (uintptr_t)worker;
     self->node = node;
+    self->ptr = (PzTaskWorkerToIndex(node, worker) << 8) | PTR_TYPE_WAKING;
 
     // update the PzTaskWorker ptr with the new initialized PzTaskThread*.
     // release barrier so that other threads see the PzTaskThread writes above.
@@ -51,7 +57,7 @@ void PzTaskThreadDestroy(PzTaskThread* self) {
     PzAssert(overflow == (uintptr_t)NULL, "non empty run queue overflow");
 }
 
-bool PzTaskThreadIsEmpty(PzTaskThread* self) {
+bool PzTaskThreadIsEmpty(const PzTaskThread* const self) {
     PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
 
     while (true) {
@@ -173,7 +179,10 @@ void PzTaskThreadPush(PzTaskThread* self, PzTaskBatch batch) {
     }
 }
 
-void PzTaskThreadInject(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTask*) runq) {
+void PzTaskThreadInject(
+    PZ_NOALIAS(PzTaskThread*) self,
+    PZ_NOALIAS(PzTask*) runq
+) {
     PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
 
     // nothing to do if there's no runq provided
@@ -198,13 +207,16 @@ void PzTaskThreadInject(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTask*) runq
 
     // update the local runq buffer pointer with new tasks if there were any
     // release barrier to ensure that stealer threads see valid PzTask* writes when they try to steal.
-    if (new_tail != tail)
+    if (new_tail != tail) {
         PzAtomicStoreRelease(&self->runq_tail, new_tail);
+    }
 
     // add any remaining tasks to the local runq overflow if there were any.
     // release barrier for the same reasoning as stated above.
-    if (runq != NULL)
+    if (runq != NULL) {
+        PzDebugAssert(PzAtomicLoad(&self->runq_overflow) == 0, "non empty runq overflow");
         PzAtomicStoreRelease(&self->runq_overflow, (uintptr_t)runq);
+    }
 }
 
 void PzTaskThreadNodePush(PzTaskNode* self, PzTaskBatch batch) {
@@ -223,7 +235,11 @@ void PzTaskThreadNodePush(PzTaskNode* self, PzTaskBatch batch) {
     } while (!PzAtomicCasRelease(&self->runq, &runq, (uintptr_t)batch.head));
 }
 
-PzTask* PzTaskThreadPollGlobal(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTaskNode*) node) {
+PzTask* PzTaskThreadPollGlobal(
+    PZ_NOALIAS(PzTaskThread*) self,
+    PZ_NOALIAS(PzTaskNode*) node,
+    PZ_NOALIAS(bool*) has_new_tasks
+) {
     PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
     PzDebugAssert(node != NULL, "invalid PzTaskNode ptr");
 
@@ -245,11 +261,18 @@ PzTask* PzTaskThreadPollGlobal(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTask
     // return the first task from the PzTask* stack we stole 
     //  and inject the rest into our thread local runq
     PzTask* first_task = (PzTask*) node_runq;
+    *has_new_tasks = first_task->next != NULL;
     PzTaskThreadInject(self, first_task->next);
     return first_task;
 }
 
-PzTask* PzTaskThreadPollLocal(PzTaskThread* self) {
+PzTask* PzTaskThreadPollLocal(
+    PZ_NOALIAS(PzTaskThread*) self,
+    PZ_NOALIAS(bool*) has_new_tasks
+) {
+    PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
+    PzDebugAssert(has_new_tasks != NULL, "invalid bool ptr");
+
     // The tail can be loaded without synchronization as we should be the only producer thread.
     // The head needs to be synchronized with other stealer threads from PzTaskThreadPoll().
     uintptr_t tail = self->runq_tail;
@@ -288,6 +311,7 @@ PzTask* PzTaskThreadPollLocal(PzTaskThread* self) {
         // will be returning the first task from the runq
         // and pushing the remaining tasks into the local runq buffer + possibly runq overflow again.
         PzTask* first_task = runq;
+        *has_new_tasks = first_task->next != NULL;
         PzTaskThreadInject(self, first_task->next);
         return first_task;
     }
@@ -296,7 +320,15 @@ PzTask* PzTaskThreadPollLocal(PzTaskThread* self) {
     return NULL;
 }
 
-PzTask* PzTaskThreadPollSteal(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTaskThread*) target) {
+PzTask* PzTaskThreadPollSteal(
+    PZ_NOALIAS(PzTaskThread*) self, 
+    PZ_NOALIAS(PzTaskThread*) target,
+    PZ_NOALIAS(bool*) has_new_tasks
+) {
+    PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
+    PzDebugAssert(target != NULL, "invalid PzTaskThread ptr");
+    PzDebugAssert(has_new_tasks != NULL, "invalid bool ptr");
+
     // get the size of the current local runq buffer to figure out how to steal from the target
     uintptr_t tail = self->runq_tail;
     uintptr_t head = PzAtomicLoad(&self->runq_head);
@@ -345,6 +377,7 @@ PzTask* PzTaskThreadPollSteal(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTaskT
             // acquire barrier to ensure that we read valid PzTask* writes from the overflow stack
             if (PzAtomicCasAcquire(&target->runq_overflow, &target_overflow, (uintptr_t)NULL)) {
                 PzTask* first_task = (PzTask*) target_overflow;
+                *has_new_tasks = first_task->next != NULL;
                 PzTaskThreadInject(self, first_task->next);
                 return first_task;
             }
@@ -380,7 +413,8 @@ PzTask* PzTaskThreadPollSteal(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTaskT
 
         // publish the tasks written to our runq buffer if we stole any.
         // release barrier so stealer threads see valid PzTask writes in the runq buffer.
-        if (new_tail != tail)
+        *has_new_tasks = new_tail != tail;
+        if (*has_new_tasks)
             PzAtomicStoreRelease(&self->runq_tail, new_tail);
 
         // return the first task we stole out of the target's runq buffer.
@@ -391,42 +425,62 @@ PzTask* PzTaskThreadPollSteal(PZ_NOALIAS(PzTaskThread*) self, PZ_NOALIAS(PzTaskT
     return NULL;
 }
 
-PzTask* PzTaskThreadPoll(PzTaskThread* self, PzTaskPollPtr poll_ptr, PzTaskResumeResult* result) {
+void PzTaskNodeResumeThread(
+    PZ_NOALIAS(PzTaskNode*) node,
+    PZ_NOALIAS(PzTaskResumeResult*) resume_result,
+    PZ_TASK_RESUME_TYPE resume_type,
+    bool is_waking
+);
+
+PzTask* PzTaskThreadPoll(
+    PZ_NOALIAS(PzTaskThread*) self,
+    PzTaskPollPtr poll_ptr,
+    PZ_NOALIAS(PzTaskResumeResult*) resume_result
+) {
     PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");
-    PzDebugAssert(result != NULL, "invalid PzTaskResumeResult ptr");
+    PzDebugAssert(resume_result != NULL, "invalid PzTaskResumeResult ptr");
 
     PzTask* task = NULL;
-    bool is_remote = false;
+    bool has_new_tasks = false;
+    bool is_waking = (self->ptr & PTR_TYPE_WAKING) != 0;
 
     // search for a task  using the poll_ptr type
     switch (PzTaskPollPtrGetType(poll_ptr)) {
-        case PZ_TASK_POLL_THREAD: {
-            PzTaskThread* thread = (PzTaskThread*) PzTaskPollPtrGetPtr(poll_ptr);
-            is_remote = thread != self;
-            task = is_remote ? PzTaskThreadPollSteal(self, thread) : PzTaskThreadPollLocal(self);
+        case PZ_TASK_POLL_NODE: {
+            PzTaskNode* node = (PzTaskNode*) PzTaskPollPtrGetPtr(poll_ptr);
+            task = PzTaskThreadPollGlobal(self, node, &has_new_tasks);
             break;
         }
 
-        case PZ_TASK_POLL_NODE: {
-            PzTaskNode* node = (PzTaskNode*) PzTaskPollPtrGetPtr(poll_ptr);
-            is_remote = true;
-            task = PzTaskThreadPollGlobal(self, node);
+        case PZ_TASK_POLL_THREAD: {
+            PzTaskThread* thread = (PzTaskThread*) PzTaskPollPtrGetPtr(poll_ptr);
+            task = (thread == self)
+                ? PzTaskThreadPollLocal(self, &has_new_tasks)
+                : PzTaskThreadPollSteal(self, thread, &has_new_tasks);
             break;
         }
     }
+    
+    // default to no resume
+    PzTaskResumeResult resume_none = { 0 };
+    *resume_result = resume_none;
 
-    // if we found a task 
-    PzTaskResumeResult none = { 0 };
-    *result = none;
-    if (task != NULL && is_remote) {
+    // if we found a task, we wake up a thread if:
+    // - we acquired new tasks during the process
+    // - we were the waking thread so we should wake another to ensure theres always a thread to handle work.
+    if ((task != NULL) && (is_waking || has_new_tasks)) {
         PzTaskNode* node = PzTaskThreadGetNode(self);
-        PzTaskNodeResumeAnyThread(node, result, is_waking);
+        PzTaskNodeResumeThread(node, resume_result, PZ_TASK_RESUME_ON_SCHEDULER, is_waking);
+        self->ptr &= ~((uintptr_t)PTR_TYPE_WAKING);
     }
 
     return task;
 }
 
-PZ_TASK_SUSPEND_STATUS PzTaskNodeSuspend(PzTaskNode* self, PzTaskThread* thread);
+PZ_TASK_SUSPEND_STATUS PzTaskNodeSuspend(
+    PZ_NOALIAS(PzTaskNode*) self,
+    PZ_NOALIAS(PzTaskThread*) thread
+);
 
 PZ_TASK_SUSPEND_STATUS PzTaskThreadSuspend(PzTaskThread* self) {
     PzDebugAssert(self != NULL, "invalid PzTaskThread ptr");

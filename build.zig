@@ -19,6 +19,8 @@ pub fn build(b: *std.build.Builder) void {
         lib.setBuildMode(mode);
         lib.setTarget(target);
         lib.setOutputDir("zig-cache");
+
+        if (mode == .Debug) lib.defineCMacro("PZ_DEBUG");
         lib.addIncludeDir("./lib/pz/include");
         break :blk lib;
     };

@@ -112,11 +112,17 @@
         PzTaskBatchPushFrontMany(self, PzTaskBatchInit(task));
     }
 
-    static PZ_INLINE void PzTaskBatchPushBack(PzTaskBatch* self, PzTask* task) {
+    static PZ_INLINE void PzTaskBatchPushBack(
+        PZ_NOALIAS(PzTaskBatch*) self,
+        PZ_NOALIAS(PzTask*) task
+    ) {
         PzTaskBatchPushBackMany(self, PzTaskBatchInit(task));
     }
 
-    static PZ_INLINE void PzTaskBatchPush(PzTaskBatch* self, PzTask* task) {
+    static PZ_INLINE void PzTaskBatchPush(
+        PZ_NOALIAS(PzTaskBatch*) self,
+        PZ_NOALIAS(PzTask*) task
+    ) {
         PzTaskBatchPushBack(self, task);
     }
 
@@ -133,23 +139,22 @@
         PzAtomicPtr ptr;
     };
 
-    typedef uint16_t PzTaskWorkerCount;
-    typedef PzTaskWorkerCount PzTaskWorkerIndex;
+    #define PZ_TASK_WORKER_MAX ((UINTPTR_MAX >> 8) - 1)
 
     struct PzTaskNode {
         PzTaskNode* next;
         PzTaskWorker* workers;
-        PzTaskWorkerCount num_workers;
+        size_t num_workers;
         PzTaskScheduler* scheduler;
         PZ_CACHE_ALIGN PzAtomicPtr runq;
         PZ_CACHE_ALIGN PzAtomicPtr idle_queue;
-        PZ_CACHE_ALIGN PzAtomicPtr active_workers;
+        PZ_CACHE_ALIGN PzAtomicPtr active_threads;
     };
 
     PZ_EXTERN void PzTaskNodeInit(
-        PzTaskNode* self,
-        PzTaskWorker* workers,
-        PzTaskWorkerCount num_workers
+        PZ_NOALIAS(PzTaskNode*) self,
+        PZ_NOALIAS(PzTaskWorker*) workers,
+        size_t num_workers
     );
 
     PZ_EXTERN void PzTaskNodeDestroy(
@@ -178,15 +183,15 @@
         return iter;
     }
 
-    static PZ_INLINE PzTaskWorkerCount PzTaskNodeGetWorkersLen(PzTaskNode* self) {
+    static PZ_INLINE size_t PzTaskNodeGetWorkersLen(const PzTaskNode* self) {
         return self->num_workers;
     }
 
-    static PZ_INLINE PzTaskWorker* PzTaskNodeGetWorkersPtr(PzTaskNode* self) {
+    static PZ_INLINE PzTaskWorker* PzTaskNodeGetWorkersPtr(const PzTaskNode* self) {
         return self->workers;
     }
 
-    static PZ_INLINE PzTaskScheduler* PzTaskNodeGetScheduler(PzTaskNode* self) {
+    static PZ_INLINE PzTaskScheduler* PzTaskNodeGetScheduler(const PzTaskNode* self) {
         return self->scheduler;
     }
 
@@ -213,37 +218,43 @@
         return self.ptr & ~((uintptr_t) 3);
     }
 
-    typedef enum PZ_TASK_RESUME_TYPE {
-        PZ_TASK_RESUME_WAKING = (1 << 0),
-        PZ_TASK_RESUME_ON_NODE = (1 << 1),
-        PZ_TASK_RESUME_ON_SCHED = (1 << 2)
-    } PZ_TASK_RESUME_TYPE;
+    typedef enum PZ_TASK_RESUME_STATUS {
+        PZ_TASK_RESUME_NOTIFIED = (1 << 0),
+        PZ_TASK_RESUME_FIRST_IN_NODE = (1 << 1),
+        PZ_TASK_RESUME_FIRST_IN_SCHEDULER = (1 << 2),
+    } PZ_TASK_RESUME_STATUS;
 
     typedef struct PzTaskResumeResult {
-        uintptr_t node_type;
+        uintptr_t node_ptr;
         PzTaskSchedulePtr sched_ptr;
     } PzTaskResumeResult;
-
-    static PZ_INLINE PZ_TASK_RESUME_TYPE PzTaskResumeResultGetType(PzTaskResumeResult* self) {
-        return self->node_type & 7;
-    }
-
-    static PZ_INLINE PzTaskNode* PzTaskResumeResultGetNode(PzTaskResumeResult* self) {
-        return (PzTaskNode*)(self->node_type & ~((uintptr_t) 7));
-    }
 
     static PZ_INLINE PzTaskSchedulePtr PzTaskResumeResultGetSchedulePtr(PzTaskResumeResult* self) {
         return self->sched_ptr;
     }
 
+    static PZ_INLINE PzTaskNode* PzTaskResumeResultGetNode(PzTaskResumeResult* self) {
+        return (PzTaskNode*)(self->node_ptr & ~((uintptr_t)3));
+    }
+
+    static PZ_INLINE PZ_TASK_RESUME_STATUS PzTaskResumeResultGetStatus(PzTaskResumeResult* self) {
+        return self->node_ptr & 3;
+    }
+
+    typedef enum PZ_TASK_RESUME_TYPE {
+        PZ_TASK_RESUME_ON_NODE = 0,
+        PZ_TASK_RESUME_ON_SCHEDULER = 1,
+    } PZ_TASK_RESUME_TYPE;
+
     PZ_EXTERN void PzTaskNodeResume(
-        PzTaskNode* self,
-        PzTaskResumeResult* result_ptr
+        PZ_NOALIAS(PzTaskNode*) self,
+        PZ_TASK_RESUME_TYPE resume_type,
+        PZ_NOALIAS(PzTaskResumeResult*) resume_result
     );
 
     PZ_EXTERN void PzTaskNodeUndoResume(
-        PzTaskNode* self,
-        PzTaskResumeResult* result_ptr
+        PZ_NOALIAS(PzTaskNode*) self,
+        PZ_NOALIAS(PzTaskResumeResult*) resume_result
     );
 
     #define PZ_TASK_BUFFER_SIZE 256
@@ -258,8 +269,8 @@
     };
 
     PZ_EXTERN void PzTaskThreadInit(
-        PzTaskThread* self,
-        PzTaskWorker* worker
+        PZ_NOALIAS(PzTaskThread*) self,
+        PZ_NOALIAS(PzTaskWorker*) worker
     );
 
     PZ_EXTERN void PzTaskThreadDestroy(
@@ -271,7 +282,7 @@
     }
 
     PZ_EXTERN bool PzTaskThreadIsEmpty(
-        PzTaskThread* self
+        const PzTaskThread* self
     );
 
     PZ_EXTERN void PzTaskThreadPush(
@@ -302,16 +313,16 @@
     }
 
     PZ_EXTERN PzTask* PzTaskThreadPoll(
-        PzTaskThread* self,
+        PZ_NOALIAS(PzTaskThread*) self,
         PzTaskPollPtr poll_ptr,
-        PzTaskResumeResult* resume_ptr
+        PZ_NOALIAS(PzTaskResumeResult*) resume_result
     );
 
     typedef enum PZ_TASK_SUSPEND_STATUS {
         PZ_TASK_SUSPEND_WAIT = (1 << 0),
         PZ_TASK_SUSPEND_NOTIFIED = (1 << 1),
         PZ_TASK_SUSPEND_LAST_IN_NODE = (1 << 2),
-        PZ_TASK_SUSPEND_LAST_IN_SCHED = (1 << 3)
+        PZ_TASK_SUSPEND_LAST_IN_SCHEDULER = (1 << 3)
     } PZ_TASK_SUSPEND_STATUS;
 
     PZ_EXTERN PZ_TASK_SUSPEND_STATUS PzTaskThreadSuspend(
