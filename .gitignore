@@ -1,4 +1,3 @@
-
-# IDE settings
-.history/
-.vscode/
+.gitignore
+zig-cache/
+zig-out/
