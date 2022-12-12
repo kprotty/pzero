@@ -1,4 +1,1 @@
-
-# IDE settings
-.history/
-.vscode/
+zig-cache/
