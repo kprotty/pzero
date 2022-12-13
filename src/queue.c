@@ -1,6 +1,6 @@
 #include "queue.h"
 
-static void pz_queue_push(INOUT struct pz_queue* NOALIAS queue, IN struct pz_queue_node* NOALIAS node) {
+static void pz_queue_push(struct pz_queue* NOALIAS queue, struct pz_queue_node* NOALIAS node) {
     ASSUME(queue != NULL);
     ASSUME(node != NULL);
 
@@ -37,10 +37,10 @@ push_to_tail:
     atomic_store_uptr_release(&queue->tail, WRAPPING_ADD(tail, 1));
 }
 
-static const uintptr_t INJECT_TAIL_POPPING_BIT = UPTR(1);
-static const uintptr_t INJECT_TAIL_NODE_MASK = ~INJECT_TAIL_POPPING_BIT;
+static const uintptr_t INJECT_TAIL_CONSUMING_BIT = UPTR(1);
+static const uintptr_t INJECT_TAIL_NODE_MASK = ~INJECT_TAIL_CONSUMING_BIT;
 
-static void pz_queue_inject(INOUT struct pz_queue* NOALIAS queue, IN const struct pz_queue_list* NOALIAS list) {
+static void pz_queue_inject(struct pz_queue* NOALIAS queue, const struct pz_queue_list* NOALIAS list) {
     ASSUME(queue != NULL);
     ASSUME(list != NULL);
 
@@ -55,7 +55,7 @@ static void pz_queue_inject(INOUT struct pz_queue* NOALIAS queue, IN const struc
 
     struct pz_queue_node* old_tail = (struct pz_queue_node*)atomic_swap_uptr_release(&queue->inject_head, UPTR(last));
     if (LIKELY(old_tail != NULL)) {
-        atomic_store_uptr_release((atomic_uptr*)&old_tail->next, UPTR(first));
+        atomic_store_uptr_release((atomic_uptr*)(&old_tail->next), UPTR(first));
         return;
     }
 
@@ -63,16 +63,16 @@ static void pz_queue_inject(INOUT struct pz_queue* NOALIAS queue, IN const struc
     ASSERT((old_head & INJECT_TAIL_NODE_MASK) == 0, "pushed to inject_tail when not empty");
 }
 
-static uintptr_t pz_queue_take(INOUT struct pz_queue* queue, INOUT struct pz_queue* target) {
+static uintptr_t pz_queue_consume(struct pz_queue* queue, struct pz_queue* target) {
     
 }
 
-static uintptr_t pz_queue_pop(INOUT struct pz_queue* queue) {
+static uintptr_t pz_queue_pop(struct pz_queue* queue) {
     (void)queue;
     return 0;
 }
 
-static uintptr_t pz_queue_steal(INOUT struct pz_queue* NOALIAS queue, struct pz_queue* NOALIAS target, struct pz_random* NOALIAS rng) {
+static uintptr_t pz_queue_steal(struct pz_queue* NOALIAS queue, struct pz_queue* NOALIAS target, struct pz_random* NOALIAS rng) {
     ASSUME(queue != NULL);
     ASSUME(target != NULL);
     ASSUME(rng != NULL);

@@ -53,7 +53,7 @@ static FORCE_INLINE uintptr_t pz_queue_popped_encode(struct pz_queue_popped* pop
     return ptr | UPTR(popped->pushed);
 }
 
-static FORCE_INLINE void pz_queue_popped_decode(OUT struct pz_queue_popped* popped, uintptr_t encoded) {
+static FORCE_INLINE void pz_queue_popped_decode(struct pz_queue_popped* popped, uintptr_t encoded) {
     ASSUME(popped != NULL);
     popped->node = (struct pz_queue_node*)(encoded & ~UPTR(1));
     popped->pushed = (encoded & UPTR(1)) != 0;

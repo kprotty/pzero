@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <assert.h>
 
-#ifdef __GNUC__
+#ifndef __GNUC__
     #error "A GNUC compatible compiler is required"
 #endif
 
