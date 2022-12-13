@@ -61,6 +61,6 @@ static FORCE_INLINE void pz_queue_popped_decode(struct pz_queue_popped* popped, 
 
 static uintptr_t pz_queue_pop(struct pz_queue* queue);
 
-static uintptr_t pz_queue_steal(struct pz_queue* NOALIAS queue, struct pz_queue* NOALIAS target, struct pz_random* NOALIAS rng);
+static uintptr_t pz_queue_steal(struct pz_queue* queue, struct pz_queue* target, struct pz_random* NOALIAS rng);
 
 #endif // _PZ_QUEUE_H

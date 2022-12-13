@@ -2,6 +2,7 @@
 #define _PZ_ATOMIC_H
 
 #include "builtin.h"
+#include "random.h"
 #include <stdatomic.h>
 
 typedef _Atomic(uintptr_t) atomic_uptr;
@@ -19,21 +20,55 @@ static FORCE_INLINE uintptr_t atomic_fetch_add_uptr_acq_rel(atomic_uptr* ptr, ui
 static FORCE_INLINE uintptr_t atomic_swap_uptr_release(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_release); }
 static FORCE_INLINE uintptr_t atomic_swap_uptr_acq_rel(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_acq_rel); }
 
-static FORCE_INLINE uintptr_t atomic_cas_uptr_acquire(atomic_uptr* NOALIAS ptr, uintptr_t* NOALIAS cmp, uintptr_t xchg) { return atomic_compare_exchange_strong_explicit(ptr, cmp, xchg, memory_order_acquire, memory_order_relaxed); }
-static FORCE_INLINE uintptr_t atomic_cas_uptr_acq_rel(atomic_uptr* NOALIAS ptr, uintptr_t* NOALIAS cmp, uintptr_t xchg) { return atomic_compare_exchange_strong_explicit(ptr, cmp, xchg, memory_order_acq_rel, memory_order_relaxed); }
+static FORCE_INLINE uintptr_t atomic_cas_uptr_acquire(atomic_uptr* NOALIAS ptr, uintptr_t* NOALIAS cmp, uintptr_t xchg) { return atomic_compare_exchange_weak_explicit(ptr, cmp, xchg, memory_order_acquire, memory_order_acquire); }
+static FORCE_INLINE uintptr_t atomic_cas_uptr_acq_rel(atomic_uptr* NOALIAS ptr, uintptr_t* NOALIAS cmp, uintptr_t xchg) { return atomic_compare_exchange_weak_explicit(ptr, cmp, xchg, memory_order_acq_rel, memory_order_acquire); }
 
-#if defined(__x86_64) || defined(_M_X64)
+#if defined(ARCH_X64)
     // Starting from Intel's Sandy Bridge, the spatial prefetcher pulls in pairs of 64-byte cache lines at a time.
     // - https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-optimization-manual.pdf
     // - https://github.com/facebook/folly/blob/1b5288e6eea6df074758f877c849b6e73bbb9fbb/folly/lang/Align.h#L107
     enum { ASSUMED_ATOMIC_CACHE_LINE = 128 };
-#elif defined(__aarch64__) || defined(_M_ARM64)
+#elif defined(ARCH_ARM64)
     // Some big.LITTLE ARM archs have "big" cores with 128-byte cache lines:
     // - https://www.mono-project.com/news/2016/09/12/arm64-icache/
     // - https://cpufun.substack.com/p/more-m1-fun-hardware-information
     enum { ASSUMED_ATOMIC_CACHE_LINE = 128 };
+#elif defined(ARCH_ARM)
+    // This platforms reportedly have 32-byte cache lines
+    // - https://github.com/golang/go/blob/3dd58676054223962cd915bb0934d1f9f489d4d2/src/internal/cpu/cpu_arm.go#L7
+    enum { ASSUMED_ATOMIC_CACHE_LINE = 32 };
 #else
+    // Other x86 and WASM platforms have 64-byte cache lines.
+    // The rest of the architectures are assumed to be similar.
+    // - https://github.com/golang/go/blob/dda2991c2ea0c5914714469c4defc2562a907230/src/internal/cpu/cpu_x86.go#L9
+    // - https://github.com/golang/go/blob/3dd58676054223962cd915bb0934d1f9f489d4d2/src/internal/cpu/cpu_wasm.go#L7
     enum { ASSUMED_ATOMIC_CACHE_LINE = 64 };
 #endif
+
+#if defined(OS_WINDOWS)
+    #define atomic_hint_yield YieldProcessor
+#elif defined(ARCH_X64) || defined(ARCH_X86)
+    #define atomic_hint_yield __builtin_ia32_pause
+#elif defined(OS_DARWIN) && defined(ARCH_ARM64)
+    #define atomic_hint_yield __builtin_arm_wfe
+#elif defined(ARCH_ARM) || defined(ARCH_ARM64)
+    #define atomic_hint_yield __builtin_arm_yield()
+#else
+    #error "architecture not supported for emitting CPU yield hint"
+#endif
+
+static void atomic_hint_backoff(struct pz_random* rng) {
+    // Decide a random amount of times to spin between 32 and 128.
+    // Uses the top bits of the random value, assuming they have the most entropy.
+    // https://github.com/apple/swift-corelibs-libdispatch/blob/main/src/shims/yield.h#L102-L125
+    uint32_t spins = pz_random_next(rng);
+    spins = ((spins >> 24) & (128 - 1)) | (32 - 1);
+
+    do {
+        atomic_hint_yield();
+    } while (CHECKED_SUB(spins, 1, &spins));
+}
+
+
 
 #endif // _PZ_ATOMIC_H

@@ -12,7 +12,7 @@ static void pz_random_init(struct pz_random* rng, uint32_t seed) {
     rng->state = seed;
 }
 
-static FORCE_INLINE uint32_t pz_random_next(struct pz_random* rng) {
+static uint32_t pz_random_next(struct pz_random* rng) {
     ASSUME(rng != 0);
     
     uint32_t xorshift = rng->state;
@@ -43,7 +43,7 @@ static void pz_random_sequence_init(struct pz_random_sequence* NOALIAS seq, stru
     seq->index = (pz_random_next(rng) >> 16) % range;
 }
 
-static FORCE_INLINE bool pz_random_sequence_next(struct pz_random_sequence* seq) {
+static bool pz_random_sequence_next(struct pz_random_sequence* seq) {
     bool valid = CHECKED_SUB(seq->iter, 1, &seq->iter);
     if (LIKELY(valid)) {
         uint32_t range = seq->range;
@@ -60,6 +60,5 @@ static FORCE_INLINE bool pz_random_sequence_next(struct pz_random_sequence* seq)
 
     return valid;
 }
-
 
 #endif // _PZ_RANDOM_H

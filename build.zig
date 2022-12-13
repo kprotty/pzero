@@ -12,6 +12,7 @@ pub fn build(b: *std.build.Builder) void {
         },
         &.{
             "-Wall",
+            "-Werror",
             "-Wextra",
             "-Wpedantic",
         },
