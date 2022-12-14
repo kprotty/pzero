@@ -5,7 +5,7 @@
 #include "random.h"
 
 struct pz_queue_node {
-    struct pz_queue_node* next;
+    atomic_uptr next;
 };
 
 struct pz_queue_list {
@@ -18,11 +18,15 @@ static FORCE_INLINE void pz_queue_list_push(struct pz_queue_list* NOALIAS list, 
     ASSUME(node != NULL);
 
     struct pz_queue_node* tail = list->tail;
-    struct pz_queue_node** link = LIKELY(tail != NULL) ? (&tail->next) : (&list->head);
-    *link = node;
 
+    struct pz_queue_node** tail_link = &list->head;
+    if (LIKELY(tail != NULL)) {
+        tail_link = (struct pz_queue_node**)&tail->next;
+    }
+
+    *tail_link = node;
     list->tail = node;
-    node->next = NULL;
+    *((struct pz_queue_node**)&node->next) = NULL;
 }
 
 enum { PZ_BUFFER_CAPACITY = 256 };

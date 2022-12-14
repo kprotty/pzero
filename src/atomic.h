@@ -15,8 +15,10 @@ static FORCE_INLINE void atomic_store_uptr_release(atomic_uptr* ptr, uintptr_t v
 
 static FORCE_INLINE uintptr_t atomic_fetch_add_uptr_acquire(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_add_explicit(ptr, value, memory_order_acquire); }
 static FORCE_INLINE uintptr_t atomic_fetch_add_uptr_release(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_add_explicit(ptr, value, memory_order_release); }
+static FORCE_INLINE uintptr_t atomic_fetch_sub_uptr_release(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_sub_explicit(ptr, value, memory_order_release); }
 static FORCE_INLINE uintptr_t atomic_fetch_add_uptr_acq_rel(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_add_explicit(ptr, value, memory_order_acq_rel); }
 
+static FORCE_INLINE uintptr_t atomic_swap_uptr_acquire(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_acquire); }
 static FORCE_INLINE uintptr_t atomic_swap_uptr_release(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_release); }
 static FORCE_INLINE uintptr_t atomic_swap_uptr_acq_rel(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_acq_rel); }
 
@@ -58,15 +60,23 @@ static FORCE_INLINE uintptr_t atomic_cas_uptr_acq_rel(atomic_uptr* NOALIAS ptr, 
 #endif
 
 static void atomic_hint_backoff(struct pz_random* rng) {
-    // Decide a random amount of times to spin between 32 and 128.
-    // Uses the top bits of the random value, assuming they have the most entropy.
-    // https://github.com/apple/swift-corelibs-libdispatch/blob/main/src/shims/yield.h#L102-L125
-    uint32_t spins = pz_random_next(rng);
-    spins = ((spins >> 24) & (128 - 1)) | (32 - 1);
+    uint32_t num_spins;
 
-    do {
+    #if defined(OS_DARWIN) && defined(ARCH_ARM64)
+        // On iOS and M1/M2, a single WFE instruction provides enough backoff delay
+        // while also sleeping efficiently unlike with the generic YIELD instruction.
+        num_spins = 1;
+    #else
+        // Decide a random amount of times to spin between 32 and 128.
+        // Unlike exponential backoff, this avoids the threads constantly contending at the same rate.
+        // Uses the top bits of the random value, assuming they have the most entropy.
+        // https://github.com/apple/swift-corelibs-libdispatch/blob/main/src/shims/yield.h#L102-L125
+        num_spins = ((pz_random_next(rng) >> 24) & (128 - 1)) | (32 - 1);
+    #endif
+
+    while (CHECKED_SUB(num_spins, 1, &num_spins)) {
         atomic_hint_yield();
-    } while (CHECKED_SUB(spins, 1, &spins));
+    }
 }
 
 

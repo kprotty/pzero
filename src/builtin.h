@@ -50,9 +50,9 @@
 
 #define ASSERT(cond, msg) assert((cond) && (msg))
 #ifdef NDEBUG
-    #define ASSUME(cond) ASSERT((cond), "reached unreachable")
+    #define ASSUME(cond) ASSERT((cond), "assumption invalidated")
 #else
-    #define ASSUME(cond) do { if (!(cond)) UNREACHABLE(); } while (0)
+    #define ASSUME(cond) do { if (UNLIKELY(!(cond))) UNREACHABLE(); } while (0)
 #endif
 
 #define UPTR(x) ((uintptr_t)(x))
