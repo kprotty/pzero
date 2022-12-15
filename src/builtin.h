@@ -41,12 +41,19 @@
     #error "target ARCH is not currently supported"
 #endif
 
+#define CONTAINER_OF(type, field, field_ptr) \
+    ((field_ptr) == NULL) \
+        ? ((type*)NULL) \
+        : ((type*)(((char*)(field_ptr)) - __builtin_offsetof(type, field)))
+
+#define UNUSED(x) ((void)(x))
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #define UNREACHABLE __builtin_unreachable
 #define STATIC_ASSERT _Static_assert
 #define FORCE_INLINE inline __attribute__((__always_inline__))
 #define NOALIAS restrict
+#define NULLABLE
 
 #define ASSERT(cond, msg) assert((cond) && (msg))
 #ifdef NDEBUG
