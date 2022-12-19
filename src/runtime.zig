@@ -51,12 +51,160 @@ const Worker = extern struct {
     fn steal(noalias worker: *Worker)
 };
 
-const Idle = extern struct {
 
+
+const Idle = extern struct {
+    queue: usize = 0,
+    unpark_next: usize = 0,
+    _cache_padding: [std.atomic.cache_line - @sizeOf(usize) - @sizeOf(usize)]u8 = undefined,
+
+    polling: Polling,
+    reactor: platform.Reactor,
+
+    fn init() Idle {
+        var active = true;
+        const reactor = platform.Reactor.init() catch blk: {
+            active = false;
+            break :blk undefined;
+        };
+
+        return .{
+            .polling = Polling.init(active),
+            .reactor = reactor,
+        };
+    }
+
+    fn deinit(idle: *Idle) void {
+        if (idle.polling.deinit()) {
+            idle.reactor.deinit();
+        }
+    }
+
+    const Tag = enum(u2) {
+        pending,
+        unpark,
+        insert,
+        cancel,
+    };
+
+    const Waiter = extern struct {
+        prev: usize,
+        next: [2]usize,
+        event: u32,
+    };
+
+    fn park(noalias idle: *Idle, noalias producer: *Queue.Producer, deadline_ns: ?u64) bool {
+        var waiter: Waiter = undefined;
+        idle.enqueue(&waiter.next[0], .insert);
+
+        if (!idle.wait(producer, &waiter.event, deadline_ns)) {
+            idle.enqueue(&waiter.next[1], .cancel);
+            assert(idle.wait(producer, &waiter.event, null));
+        }
+
+        return @enumToInt(Tag, @truncate(u2, waiter.prev)) != .cancel;
+    }
+
+    fn unpark(idle: *Idle) void {
+        idle.enqueue(&idle.unpark_next, .unpark);
+    }
+
+    fn enqueue(noalias idle: *Idle, noalias link: *usize, tag: Tag) void {
+
+    }
+
+    fn insert(noalias list: *?*Waiter, noalias waiter: *Waiter) bool {
+
+    }
+
+    fn remove(noalias list: *?*Waiter, noalias waiter: *Waiter) void {
+        
+    }
+
+    const empty = 0;
+    const wait_futex = 1;
+    const wait_reactor = 2;
+    const notified = 3;
+
+    fn wait(noalias idle: *Idle, noalias producer: *Queue.Producer, noalias event: *u32, deadline_ns: ?u64) bool {
+        var state = @atomicLoad(u32, event, .Acquire);
+        if (state == notified) {
+            return true;
+        }
+
+        var wait_state: u32 = wait_futex;
+        if (idle.polling.acquire()) {
+            wait_state = wait_reactor;
+        }
+
+        var unreffed: u32 = 0;
+        defer if (wait_state == wait_reactor) {
+            idle.polling.release(unreffed);
+        };
+
+        if (@cmpxchgStrong(u32, event, empty, wait_state, .Release, .Acquire)) |new_state| {
+            assert(new_state == notified);
+            return true;
+        }
+
+        var poll_context = @ptrCast(*anyopaque, event);
+        if (wait_state == wait_reactor) {
+            poll_context = @ptrCast(*anyopaque, producer);
+        }
+
+        var result = idle.poll(poll_context, wait_state, deadline_ns);
+        unreffed = result >> 1;
+        if (result & 1 != 0) {
+            assert(@atomicLoad(u32, event, .Acquire) == notified);
+            return true;
+        }
+
+        state = @cmpxchgStrong(u32, event, wait_state, empty, .Release, .Acquire) orelse return false;
+        assert(state == notified);
+
+        result = idle.poll(poll_context, wait_state, null);
+        unreffed += result >> 1;
+        assert(result & 1 != 0);
+        return true;
+    } 
+
+    fn poll(noalias idle: *Idle, noalias context: *anyopaque, wait_state: u32, deadline_ns: ?u64) u32 {
+        if (wait_state == wait_reactor) {
+            const producer = @ptrCast(*Queue.Producer, @alignCast(@alignOf(Queue.Producer), context));
+            return idle.reactor.poll(producer, deadline_ns);
+        }
+
+        assert(wait_state == wait_futex);
+        const event = @ptrCast(*u32, @alignCast(@alignOf(u32), context));
+
+        while (true) {
+            if (!platform.futex_wait(event, wait_state, deadline_ns)) {
+                return 0;
+            }
+
+            const current_state = @atomicLoad(u32, event, .Acquire);
+            assert(current_state == wait_state or current_state == notified);
+            if (current_state == notified) {
+                return 1;
+            }
+        }
+    }
+
+    fn set(noalias idle: *Idle, noalias event: *u32) void {
+        const state = @atomicRmw(u32, event, .Xchg, notified, .AcqRel);
+        switch (state) {
+            empty => {},
+            wait_reactor => idle.reactor.notify(),
+            wait_futex => platform.futex_wake(event),
+            notified => unreachable,
+            else => unreachable,
+        }
+    }
 };
 
 const Polling = extern struct {
     state: u32,
+    _cache_padding: [std.atomic.cache_line - @sizeOf(u32)]u8 = undefined,
 
     const State = packed struct {
         active: bool = false,
@@ -66,6 +214,13 @@ const Polling = extern struct {
 
     fn init(active: bool) Polling {
         return .{ .state = @bitCast(u32, State{ .active = active }) };
+    }
+
+    fn deinit(polling: *Polling) bool {
+        const state = @bitCast(State, polling.state);
+        assert(state.pending == 0);
+        assert(!state.acquired);
+        return state.active;
     }
 
     fn ref(polling: *Polling) void {
