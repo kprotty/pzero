@@ -33,52 +33,16 @@ pub const Scheduler = extern struct {
 };
 
 const Worker = extern struct {
-    injector: Injector = .{},
-    queue: Queue = .{},
-
+    run_queue: Queue = .{},
     scheduler: *Scheduler,
-    random
-
-    fn submit(noalias worker: *Worker, noalias task: *Task) void {
-        worker.queue.push(task, &worker.injector);
-        worker.scheduler.notify();
-    }
-
-    fn inject(noalias worker: *Worker, noalias task: *Task) void {
-
-    }
-
-    fn steal(noalias worker: *Worker)
+    random: Random,
+    event: u32 = 0,
 };
 
-
-
 const Idle = extern struct {
-    queue: usize = 0,
+    state: usize = 0,
     unpark_next: usize = 0,
     _cache_padding: [std.atomic.cache_line - @sizeOf(usize) - @sizeOf(usize)]u8 = undefined,
-
-    polling: Polling,
-    reactor: platform.Reactor,
-
-    fn init() Idle {
-        var active = true;
-        const reactor = platform.Reactor.init() catch blk: {
-            active = false;
-            break :blk undefined;
-        };
-
-        return .{
-            .polling = Polling.init(active),
-            .reactor = reactor,
-        };
-    }
-
-    fn deinit(idle: *Idle) void {
-        if (idle.polling.deinit()) {
-            idle.reactor.deinit();
-        }
-    }
 
     const Tag = enum(u2) {
         pending,
@@ -87,38 +51,203 @@ const Idle = extern struct {
         cancel,
     };
 
-    const Waiter = extern struct {
-        prev: usize,
-        next: [2]usize,
-        event: u32,
-    };
-
-    fn park(noalias idle: *Idle, noalias producer: *Queue.Producer, deadline_ns: ?u64) bool {
+    fn park(noalias idle: *Idle, noalias event: *Event, noalias producer: *Queue.Producer, deadline_ns: ?u64) bool {
         var waiter: Waiter = undefined;
-        idle.enqueue(&waiter.next[0], .insert);
+        waiter.prev = @enumToInt(Tag.pending);
+        waiter.producer = producer;
+        idle.enqueue(event, &waiter.next, .insert);
 
-        if (!idle.wait(producer, &waiter.event, deadline_ns)) {
-            idle.enqueue(&waiter.next[1], .cancel);
-            assert(idle.wait(producer, &waiter.event, null));
+        if (!event.wait(producer, deadline_ns)) {
+            idle.enqueue(event, &waiter.cancel_next, .cancel);
+            assert(event.wait(producer, null));
         }
 
-        return @enumToInt(Tag, @truncate(u2, waiter.prev)) != .cancel;
+        return waiter.get_tag() != .cancel;
     }
 
-    fn unpark(idle: *Idle) void {
-        idle.enqueue(&idle.unpark_next, .unpark);
+    fn unpark(noalias idle: *Idle, noalias event: *Event) void {
+        idle.enqueue(event, &idle.unpark_next, .unpark);
     }
 
-    fn enqueue(noalias idle: *Idle, noalias link: *usize, tag: Tag) void {
+    fn enqueue(noalias idle: *Idle, noalias event: *Event, noalias link: *usize, new_tag: Tag) void {
+        new_link.* = 0;
+        assert(@ptrToInt(new_link) & 0b11 == 0);
+        var new_state = @ptrToInt(new_link) | @enumToInt(new_tag);
 
+        const old_state = @atomicRmw(usize, &idle.state, .Xchg, new_state, .AcqRel);
+        const old_link = @intToPtr(?*usize, old_state & ~@as(usize, 0b11));
+        const old_tag = @intToEnum(Tag, @truncate(u2, old_state));
+        
+        if (old_tag != .pending) {
+            const link = old_link orelse unreachable;
+            mstore(link, new_state);
+            return;
+        }
+
+        var unpark_list: ?*Waiter = null;
+        defer while (unpark_list) |waiter| {
+            assert(@intToEnum(Tag, @truncate(u2, waiter.prev)) != .insert);
+            remove(&unpark_list, waiter, .unpark);
+            event.set(waiter.producer);
+        };
+
+        var unpark_one = false;
+        var last_state: usize = 0;
+        var wait_list = blk: {
+            const link = old_link orelse break :blk null;
+            break :blk @fieldParentPtr(Waiter, "next", link);
+        };
+
+        while (true) {
+            var current = new_state;
+            while (current != last_state) {
+                const link = @intToPtr(*usize, current & ~@as(usize, 0b11));
+                const tag = @intToEnum(Tag, @truncate(u2, current));
+                current = mwait(link);
+
+                switch (tag) {
+                    .pending => unreachable,
+                    .unpark => {
+                        assert(link == &idle.unpark_next);
+                        assert(!unpark_one);
+                        unpark_one = true;
+                    },
+                    .insert => {
+                        const waiter = @fieldParentPtr(Waiter, "next", link);
+                        assert(@intToEnum(Tag, @truncate(u2, waiter.prev)) == .pending);
+
+                        waiter.prev = (waiter.prev & ~@as(usize, 0b11)) | @enumToInt(Tag.insert);
+                        insert(&wait_list, waiter);
+                    },
+                    .cancel => {
+                        const waiter = @fieldParentPtr(Waiter, "cancel_next", link);
+                        const old_tag = @intToEnum(Tag, @truncate(u2, waiter.prev));
+
+                        waiter.prev = (waiter.prev & ~@as(usize, 0b11)) | @enumToInt(Tag.cancel);
+                        if (old_tag == .insert) {
+                            remove(&wait_list, waiter);
+                        }
+                    },
+                }
+            }
+
+            var next_state = @enumToInt(Tag.pending);
+            if (wait_list) |waiter| {
+                if (unpark_one) {
+                    assert(@intToEnum(Tag, @truncate(u2, waiter.prev)) == .insert);
+                    remove(&wait_list, waiter);
+                    
+                    waiter.prev = (waiter.prev & ~@as(usize, 0b11)) | @enumToInt(Tag.unpark);
+                    insert(&unpark_list, waiter);
+                }
+                if (wait_list) |w| {
+                    next_state = @ptrToInt(w) | @enumToInt(Tag.pending);
+                }
+            } else if (unpark_one) {
+                next_state = @ptrToInt(&idle.unpark_next) | @enumToInt(Tag.unpark);
+            }
+
+            last_state = new_state;
+            new_state = @atomicRmw(usize, &idle.state, last_state, next_state, .Release, .Acquire) orelse return;
+
+            if (unpark_list) |waiter| {
+                if (unpark_one) {
+                    assert(@intToEnum(Tag, @truncate(u2, waiter.prev)) == .unpark);
+                    remove(&unpark_list, waiter);
+
+                    waiter.prev = (waiter.prev & ~@as(usize, 0b11)) | @enumToInt(Tag.insert);
+                    insert(&wait_list, waiter);
+                }
+            }
+        }
     }
 
-    fn insert(noalias list: *?*Waiter, noalias waiter: *Waiter) bool {
+    fn insert(noalias list: *?*Waiter, noalias waiter: *Waiter) void {
+        const list_head = list.*;
+        waiter.prev = waiter.prev & 0b11;
+        waiter.next = @ptrToInt(list_head);
 
+        const head = list_head orelse {
+            list.* = waiter;
+            return;
+        };
+        
+        assert(head.prev & ~@as(usize, 0b11) == 0);
+        head.prev = @ptrToInt(waiter) | (head.prev & 0b11);
     }
 
     fn remove(noalias list: *?*Waiter, noalias waiter: *Waiter) void {
+        const head = list.* orelse unreachable;
+        assert(head.prev & ~@as(usize, 0b11) == 0);
+
+        const prev = waiter.prev & ~@as(usize, 0b11);
+        const next = waiter.next;
+
+        waiter.prev = waiter.prev & 0b11;
+        waiter.next = 0;
+
+        if (@intToPtr(?*Waiter, next)) |n| {
+            assert((n.prev & ~@as(usize, 0b11)) == @ptrToInt(waiter));
+            n.prev = @ptrToInt(prev) | (n.prev & 0b11);
+        }
+
+        if (@intToPtr(?*Waiter, prev)) |p| {
+            assert(p.next == @ptrToInt(waiter));
+            p.next = next;
+        } else {
+            assert(head == waiter);
+            link.* = next;
+        }
+    }
+
+    fn mwait(link: *usize) usize {
+        var spin: usize = 32;
+        while (spin > 0) : (spin -= 1) {
+            switch (@atomicLoad(usize, link, .Acquire)) {
+                0 => std.atomic.spinLoopHint(),
+                else => |value| return value,
+            }
+        }
+
+        var futex: u32 = 0;
+        var value = @atomicRmw(usize, link, .Xchg, @ptrToInt(&futex), .AcqRel);
+        if (value != 0) {
+            return value;
+        }
         
+        while (true) {
+            _ = platform.futex_wait(&futex, 0, null);
+            if (@atomicLoad(u32, &futex, .Acquire) == 0) {
+                continue;
+            }
+
+            value = @atomicLoad(usize, link, .Acquire);
+            assert(value != 0);
+            return value;
+        }
+    }
+
+    fn mstore(link: *usize, new_value: usize) void {
+        assert(new_value != 0);
+        const old_value = @atomicRmw(usize, link, .Xchg, new_value, .AcqRel);
+
+        if (@intToPtr(?*u32, old_value)) |futex| {
+            @atomicStore(u32, futex, 1, .Release);
+            platform.futex_wake(futex);
+        }
+    }
+};
+
+const Event = extern struct {
+    polling: Polling,
+    reactor: platform.Reactor,
+
+    fn init() Event {
+
+    }
+
+    fn deinit(event: *Event) void {
+
     }
 
     const empty = 0;
@@ -126,79 +255,16 @@ const Idle = extern struct {
     const wait_reactor = 2;
     const notified = 3;
 
-    fn wait(noalias idle: *Idle, noalias producer: *Queue.Producer, noalias event: *u32, deadline_ns: ?u64) bool {
-        var state = @atomicLoad(u32, event, .Acquire);
-        if (state == notified) {
-            return true;
-        }
-
-        var wait_state: u32 = wait_futex;
-        if (idle.polling.acquire()) {
-            wait_state = wait_reactor;
-        }
-
-        var unreffed: u32 = 0;
-        defer if (wait_state == wait_reactor) {
-            idle.polling.release(unreffed);
-        };
-
-        if (@cmpxchgStrong(u32, event, empty, wait_state, .Release, .Acquire)) |new_state| {
-            assert(new_state == notified);
-            return true;
-        }
-
-        var poll_context = @ptrCast(*anyopaque, event);
-        if (wait_state == wait_reactor) {
-            poll_context = @ptrCast(*anyopaque, producer);
-        }
-
-        var result = idle.poll(poll_context, wait_state, deadline_ns);
-        unreffed = result >> 1;
-        if (result & 1 != 0) {
-            assert(@atomicLoad(u32, event, .Acquire) == notified);
-            return true;
-        }
-
-        state = @cmpxchgStrong(u32, event, wait_state, empty, .Release, .Acquire) orelse return false;
-        assert(state == notified);
-
-        result = idle.poll(poll_context, wait_state, null);
-        unreffed += result >> 1;
-        assert(result & 1 != 0);
-        return true;
+    fn wait(noalias event: *Event, noalias producer: *Queue.Producer, deadline_ns: ?u64) bool {
+        
     } 
 
     fn poll(noalias idle: *Idle, noalias context: *anyopaque, wait_state: u32, deadline_ns: ?u64) u32 {
-        if (wait_state == wait_reactor) {
-            const producer = @ptrCast(*Queue.Producer, @alignCast(@alignOf(Queue.Producer), context));
-            return idle.reactor.poll(producer, deadline_ns);
-        }
-
-        assert(wait_state == wait_futex);
-        const event = @ptrCast(*u32, @alignCast(@alignOf(u32), context));
-
-        while (true) {
-            if (!platform.futex_wait(event, wait_state, deadline_ns)) {
-                return 0;
-            }
-
-            const current_state = @atomicLoad(u32, event, .Acquire);
-            assert(current_state == wait_state or current_state == notified);
-            if (current_state == notified) {
-                return 1;
-            }
-        }
+        
     }
 
-    fn set(noalias idle: *Idle, noalias event: *u32) void {
-        const state = @atomicRmw(u32, event, .Xchg, notified, .AcqRel);
-        switch (state) {
-            empty => {},
-            wait_reactor => idle.reactor.notify(),
-            wait_futex => platform.futex_wake(event),
-            notified => unreachable,
-            else => unreachable,
-        }
+    fn set(noalias event: *Event, noalias producer: *Queue.Producer) void {
+        
     }
 };
 
@@ -520,11 +586,6 @@ const Random = extern struct {
     }
 
     fn backoff(random: *Random) void {
-        if (comptime builtin.target.isDarwin() and builtin.target.cpu.arch == .aarch64) {
-            asm volatile("wfe" ::: "memory");
-            return;
-        }
-
         var spins = ((random.next() >> 24) & (128 - 1)) | (32 - 1);
         while (spins > 0) : (spins -= 1) {
             std.atomic.spinLoopHint();
