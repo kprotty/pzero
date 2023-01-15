@@ -2,75 +2,95 @@
 #define _PZ_ATOMIC_H
 
 #include "builtin.h"
-#include "random.h"
 #include <stdatomic.h>
 
-typedef atomic_uintptr_t atomic_uptr;
-
-static FORCE_INLINE uintptr_t atomic_load_uptr(atomic_uptr* ptr) { return atomic_load_explicit(ptr, memory_order_relaxed); }
-static FORCE_INLINE uintptr_t atomic_load_uptr_acquire(atomic_uptr* ptr) { return atomic_load_explicit(ptr, memory_order_acquire); }
-
-static FORCE_INLINE void atomic_store_uptr(atomic_uptr* ptr, uintptr_t value) { atomic_store_explicit(ptr, value, memory_order_relaxed); }
-static FORCE_INLINE void atomic_store_uptr_release(atomic_uptr* ptr, uintptr_t value) { atomic_store_explicit(ptr, value, memory_order_release); }
-
-static FORCE_INLINE uintptr_t atomic_fetch_add_uptr_acquire(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_add_explicit(ptr, value, memory_order_acquire); }
-static FORCE_INLINE uintptr_t atomic_fetch_add_uptr_release(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_add_explicit(ptr, value, memory_order_release); }
-static FORCE_INLINE uintptr_t atomic_fetch_sub_uptr_release(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_sub_explicit(ptr, value, memory_order_release); }
-static FORCE_INLINE uintptr_t atomic_fetch_add_uptr_acq_rel(atomic_uptr* ptr, uintptr_t value) { return atomic_fetch_add_explicit(ptr, value, memory_order_acq_rel); }
-
-static FORCE_INLINE uintptr_t atomic_swap_uptr_acquire(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_acquire); }
-static FORCE_INLINE uintptr_t atomic_swap_uptr_release(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_release); }
-static FORCE_INLINE uintptr_t atomic_swap_uptr_acq_rel(atomic_uptr* ptr, uintptr_t value) { return atomic_exchange_explicit(ptr, value, memory_order_acq_rel); }
-
-static FORCE_INLINE uintptr_t atomic_cas_uptr_acquire(atomic_uptr* NOALIAS ptr, uintptr_t* NOALIAS cmp, uintptr_t xchg) { return atomic_compare_exchange_strong_explicit(ptr, cmp, xchg, memory_order_acquire, memory_order_relaxed); }
-static FORCE_INLINE uintptr_t atomic_cas_uptr_acq_rel(atomic_uptr* NOALIAS ptr, uintptr_t* NOALIAS cmp, uintptr_t xchg) { return atomic_compare_exchange_strong_explicit(ptr, cmp, xchg, memory_order_acq_rel, memory_order_relaxed); }
-
-#if defined(ARCH_X64)
-    // Starting from Intel's Sandy Bridge, the spatial prefetcher pulls in pairs of 64-byte cache lines at a time.
-    // - https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-optimization-manual.pdf
-    // - https://github.com/facebook/folly/blob/1b5288e6eea6df074758f877c849b6e73bbb9fbb/folly/lang/Align.h#L107
-    enum { ATOMIC_CACHE_LINE_ASSUMED = 128 };
-#elif defined(ARCH_ARM64)
-    // Some big.LITTLE ARM archs have "big" cores with 128-byte cache lines:
-    // - https://www.mono-project.com/news/2016/09/12/arm64-icache/
-    // - https://cpufun.substack.com/p/more-m1-fun-hardware-information
-    enum { ATOMIC_CACHE_LINE_ASSUMED = 128 };
-#elif defined(ARCH_ARM)
-    // This platforms reportedly have 32-byte cache lines
-    // - https://github.com/golang/go/blob/3dd58676054223962cd915bb0934d1f9f489d4d2/src/internal/cpu/cpu_arm.go#L7
-    enum { ATOMIC_CACHE_LINE_ASSUMED = 32 };
-#else
-    // Other x86 and WASM platforms have 64-byte cache lines.
-    // The rest of the architectures are assumed to be similar.
-    // - https://github.com/golang/go/blob/dda2991c2ea0c5914714469c4defc2562a907230/src/internal/cpu/cpu_x86.go#L9
-    // - https://github.com/golang/go/blob/3dd58676054223962cd915bb0934d1f9f489d4d2/src/internal/cpu/cpu_wasm.go#L7
-    enum { ATOMIC_CACHE_LINE_ASSUMED = 64 };
-#endif
-
-static void atomic_hint_backoff(struct pz_random* rng) {
-    #if defined(OS_DARWIN) && defined(ARCH_ARM64)
-        // On iOS and M1/M2, a single WFE instruction provides enough backoff delay
-        // while also sleeping efficiently unlike with the generic YIELD instruction.
-        UNUSED(rng);
-        __builtin_arm_wfe();
+enum {
+    #if defined(__x86_64__) || defined(__aarch64__)
+        PZ_ATOMIC_CACHE_LINE = 128
+    #elif defined(__arm__)
+        PZ_ATOMIC_CACHE_LINE = 32
     #else
-        // Decide a random amount of times to spin between 32 and 128.
-        // Unlike exponential backoff, this avoids the threads constantly contending at the same rate.
-        // Uses the top bits of the random value, assuming they have the most entropy.
-        // https://github.com/apple/swift-corelibs-libdispatch/blob/main/src/shims/yield.h#L102-L125
-        uint32_t spin_count = ((pz_random_next(rng) >> 24) & (128 - 1)) | (32 - 1);
-        while (CHECKED_SUB(spin_count, 1, &spin_count)) {
-            #if defined(OS_WINDOWS)
-                YieldProcessor();
-            #elif defined(ARCH_X64) || defined(ARCH_X86)
-                __builtin_ia32_pause();
-            #elif defined(ARCH_ARM) || defined(ARCH_ARM64)
-                __builtin_arm_yield()
-            #else
-                #error "architecture not supported for emitting CPU yield hint"
-            #endif
+        PZ_ATOMIC_CACHE_LINE = 64
+    #endif  
+};
+
+static inline void pz_atomic_yield(void) {
+    #if defined(__aarch64__)
+        __builtin_arm_isb(0xf); // Use ISB(SY) over yield as it pauses most efficiently.
+    #elif defined(__arm__) || defined(__arm64__) || defined(__thumb__)
+        __builtin_arm_yield();
+    #elif defined(__i386__) || defined(__x86_64__)
+        __builtin_ia32_pause();
+    #else
+        #error "cpu architecture not supported"
+    #endif
+}
+
+static inline void pz_atomic_backoff(void) {
+    // A simple LCG pseudo-random number generator (based on old libc's random).
+    // It's ok that loads/stores are used as it may only end up replaying random values.
+    // This function is called in response to contention, so introducing more RMWs wouldn't help.
+    static _Atomic(uint32_t) seed = 1;
+    uint32_t rng = atomic_load_explicit(&seed, memory_order_relaxed);
+    uint32_t next = PZ_WRAPPING_ADD(PZ_WRAPPING_MUL(rng, 1103515245), 12345);
+    atomic_store_explicit(&seed, next, memory_order_relaxed);
+
+    // Spin for MIN(128, MAX(32, R)) where R = highest bits of entropy from RNG.
+    uint32_t spin_min = 32 - 1, spin_max = 128 - 1;
+    uint32_t spin = ((rng >> 24) & spin_min) | spin_max;
+    while (PZ_OVERFLOW_SUB(spin, 1, &spin)) {
+        pz_atomic_yield();
+    }
+}
+
+static void* pz_atomic_mwait(_Atomic(void*)* ptr) {
+    // Initial load to see if there's a value.
+    void* value;
+    if (PZ_LIKELY(value = atomic_load_explicit(ptr, memory_order_acquire))) {
+        return value;
+    }
+
+    // Spin for a bit using WFE on Apple's ARM chips as it's the most efficient way to sleep.
+    // https://github.com/apple/swift-corelibs-libdispatch/blob/469c8ecfa0011f5da23acacf8658b6a60a899a78/src/shims/yield.c#L44-L54
+    #if (defined(__arm__) && defined(__APPLE__)) || defined(__arm64__)
+        uint32_t spin = 10;
+        while (PZ_LIKELY(PZ_OVERFLOW_SUB(spin, 1, &spin))) {
+            if (PZ_LIKELY(value = __builtin_arm_ldaex(ptr))) {
+                __builtin_arm_clrex();
+                return value;
+            }
+            __builtin_arm_wfe();
+        }
+
+    // Emulate NTDLL by spinning using CyclesPerYield or MWAITX and only when other threads are active.
+    #elif defined(_WIN32)
+        uint16_t UnparkedProcessorCount = *((volatile uint16_t*)(0x7ffe0000 + 0x036a));
+        uint16_t CyclesPerYield = *((volatile uint16_t*)(0x7ffe0000 + 0x02d6));
+        uint16_t MaxSpinCycles = 0x2800;
+
+        if (PZ_LIKELY(UnparkedProcessorCount > 1)) {
+            uint32_t spin = MaxSpinCycles / CyclesPerYield;
+            while (PZ_LIKELY(PZ_OVERFLOW_SUB(spin, 1, &spin))) {
+                pz_atomic_yield();
+                if (PZ_LIKELY(value = atomic_load_explicit(ptr, memory_order_acquire))) {
+                    return value;
+                }
+            }
+        }
+
+    // Spin for a bit trying to load the value.
+    // https://github.com/apple/swift-corelibs-libdispatch/blob/469c8ecfa0011f5da23acacf8658b6a60a899a78/src/shims/yield.c#L54-L63
+    #else
+        uint32_t spins = 128;
+        while (PZ_LIKELY(PZ_OVERFLOW_SUB(spin, 1, &spin))) {
+            pz_atomic_yield();
+            if (PZ_LIKELY(value = atomic_load_explicit(ptr, memory_order_acquire))) {
+                return value;
+            }
         }
     #endif
+
+    return NULL;
 }
 
 #endif // _PZ_ATOMIC_H

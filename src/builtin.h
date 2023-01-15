@@ -1,71 +1,44 @@
 #ifndef _PZ_BUILTIN_H
 #define _PZ_BUILTIN_H
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-#include <assert.h>
+#include <pz.h>
 
+// Supports only modern GCC compatible compilers
 #ifndef __GNUC__
-    #error "A GNUC compatible compiler is required"
+    #error "Only GCC-compatible compilers are currently supported"
 #endif
 
-#if defined(_WIN32)
-    #include <Windows.h>
-    #define OS_WINDOWS
-#elif defined(__APPLE__)
-    #define OS_DARWIN
-#elif defined(__linux__)
-    #define OS_LINUX
-#elif defined(__DragonFly__)
-    #define OS_DRAGONFLY
-#elif defined(__FreeBSD__)
-    #define OS_FREEBSD
-#elif defined(__NetBSD__)
-    #define OS_NETBSD
-#elif defined(__OpenBSD__)
-    #define OS_OPENBSD
+// Attributes
+#define PZ_COLD __attribute__((__cold__))
+#define PZ_EXPORT __attribute__((dllexport))
+#define PZ_ALIGNED(alignment) __attribute__((__aligned__(alignment)))
+
+// Builtins
+#define PZ_STATIC_ASSERT _Static_assert
+#define PZ_LIKELY(x) __builtin_expect(!!(x), 1)
+#define PZ_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define PZ_UNREACHABLE __builtin_unreachable
+#define PZ_UNUSED(x) ((void)(x))
+
+// Assertions
+#if defined(NDEBUG)
+    #define PZ_ASSERT(x) do { if (PZ_UNLIKELY(!(x))) PZ_UNREACHABLE(); } while (0)
 #else
-    #error "target OS is not currently supported"
+    #include <assert.h>
+    #define PZ_ASSERT(x) assert(x)
 #endif
 
-#if defined(__x86_64__)
-    #define ARCH_X64
-#elif defined(__i386__)
-    #define ARCH_X86
-#elif defined(__aarch64__)
-    #define ARCH_ARM64
-#elif defined(__arm__) || defined(__thumb__)
-    #define ARCH_ARM
-#else
-    #error "target ARCH is not currently supported"
-#endif
+// Arithmetic
+#define PZ_WRAPPING_ADD(x, y) ((x) + (y))
+#define PZ_WRAPPING_SUB(x, y) ((x) - (y))
+#define PZ_WRAPPING_MUL(x, y) ((x) * (y))
+#define PZ_OVERFLOW_ADD __builtin_add_overflow
+#define PZ_OVERFLOW_SUB __builtin_sub_overflow
 
-#define CONTAINER_OF(type, field, field_ptr) \
-    ((field_ptr) == NULL) \
-        ? ((type*)NULL) \
-        : ((type*)(((char*)(field_ptr)) - __builtin_offsetof(type, field)))
-
-#define UNUSED(x) ((void)(x))
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#define UNREACHABLE __builtin_unreachable
-#define STATIC_ASSERT _Static_assert
-#define FORCE_INLINE inline __attribute__((__always_inline__))
-#define NOALIAS restrict
-#define NULLABLE
-
-#define ASSERT(cond, msg) assert((cond) && (msg))
-#ifdef NDEBUG
-    #define ASSUME(cond) ASSERT((cond), "assumption invalidated")
-#else
-    #define ASSUME(cond) do { if (UNLIKELY(!(cond))) UNREACHABLE(); } while (0)
-#endif
-
-#define UPTR(x) ((uintptr_t)(x))
-#define WRAPPING_ADD(x, y) ((x) + (y))
-#define WRAPPING_SUB(x, y) ((x) - (y))
-#define CHECKED_ADD __builtin_add_overflow 
-#define CHECKED_SUB __builtin_sub_overflow
+// Pointers & Aliasing
+#define PZ_FIELD_OF(type, field, obj_ptr) \
+    _Generic((obj_ptr), type*: (type*)((char*)(obj_ptr) + offsetof(type, field)))
+#define PZ_OBJECT_OF(type, field, field_ptr) \
+    _Generic((field_ptr), type*: (type*)((char*)(field_ptr) - offsetof(type, field)))
 
 #endif // _PZ_BUILTIN_H

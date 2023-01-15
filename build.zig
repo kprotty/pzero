@@ -6,6 +6,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const pz = b.addSharedLibrary("pz", null, .unversioned);
     pz.addIncludePath("./src");
+    pz.addIncludePath("./include");
     pz.addCSourceFiles(
         &.{
             "src/queue.c",
