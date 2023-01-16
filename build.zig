@@ -10,6 +10,7 @@ pub fn build(b: *std.build.Builder) void {
     pz.addCSourceFiles(
         &.{
             "src/queue.c",
+            "src/pending.c",
         },
         &.{
             "-Wall",
