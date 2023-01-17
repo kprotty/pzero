@@ -1,87 +1,78 @@
 #ifndef _PZ_H
 #define _PZ_H
-
 #ifdef __cplusplus
     extern "C" {
 #endif
 
-#include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
 
-#ifdef __GNUC__
-#define PZ_GCC_VERSION (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
-#else
-#define PZ_GCC_VERSION 0
-#endif
-
-#ifdef __has_attribute
-#define PZ_HAS_ATTR(attr) __has_attribute(attr)
-#else
-#define PZ_HAS_ATTR(attr) 0
-#endif
-
-#if PZ_HAS_ATTR(__nonnull__) || PZ_GCC_VERSION
-#define PZ_NONNULL(...) __attribute__((__nonnull__(__VA_ARGS__)))
-#else
-#define PZ_NONNULL(...) /**/
-#endif
-
-struct pz_context;
-struct pz_task;
-
-typedef void (*pz_task_callback)(
-    struct pz_context* restrict context,
-    struct pz_task* restrict task);
+typedef struct pz_task pz_task;
+typedef struct pz_worker pz_worker;
+typedef void (*pz_task_callback)(pz_task* task, pz_worker* worker);
 
 struct pz_task {
     void* reserved;
-    pz_task_callback callback; 
+    pz_task_callback callback;
 };
 
-PZ_NONNULL(1, 2)
-void pz_schedule(struct pz_context* restrict context, struct pz_task* restrict task);
+// Returns the config.context given when the runtime was started.
+void* pz_context(const pz_worker* worker);
 
-PZ_NONNULL(1)
-void pz_shutdown(struct pz_context* context); 
+// Returns the current worker id.
+unsigned int pz_id(const pz_worker* worker);
+
+// Schedules a task (assuming its callback was set) to run on the runtime associated with the worker.
+void pz_schedule(pz_worker* worker, pz_task* task);
+
+// Stops the runtime associated with the worker, eventually stopping all workers and returning from pz_run().
+void pz_shutdown(pz_worker* worker);
 
 enum PZ_TRACE_EVENT {
-    PZ_TRACE_EXECUTE,
+    PZ_TRACE_ON_WORKER_START, // Generated on a newly started worker before it starts running.
+    PZ_TRACE_ON_WORKER_STOP, // Generated on a worker before it stops running.
+    PZ_TRACE_ON_WORKER_PARK, // Generated just before a worker is put to sleep.
+    PZ_TRACE_ON_WORKER_UNPARK, // Generated just after a worker thread is woken up.
+    PZ_TRACE_ON_WORKER_EXECUTE, // Generated on a worker before it invokes a task callback.
 };
 
-struct pz_trace {
+typedef struct pz_trace {
     enum PZ_TRACE_EVENT event;
     union {
+        pz_worker* on_start;
+        pz_worker* on_stop;
+        pz_worker* on_park;
+        pz_worker* on_unpark;
         struct {
-            struct pz_context* context;
-            struct pz_task* task;
-        } execute;
+            pz_worker* worker;
+            pz_task* task;
+        } on_execute;
     } data;
-};
+} pz_trace;
 
-typedef void (*pz_trace_callback)(
-    void* restrict trace_context,
-    const struct pz_trace* restrict trace);
+typedef void (*pz_trace_callback)(void* context, const pz_trace* trace);
 
-struct pz_config {
+typedef struct pz_config {
+    void* context;
+    size_t stack_size;
     unsigned int max_workers;
-    void* trace_context;
+    unsigned int task_poll_interval;
+    unsigned int event_poll_interval;
     pz_trace_callback trace_callback;
-};
+} pz_config;
 
-PZ_NONNULL(1, 2)
-void pz_run(const struct pz_config* restrict config, struct pz_task* restrict task);
+int pz_run(const pz_config* config, pz_task* main_task);
 
-struct pz_completion {
+typedef struct pz_completion {
     void* reserved[64 / sizeof(void*)];
-};
+} pz_completion;
 
-PZ_NONNULL(1)
-bool pz_cancel(struct pz_completion* completion);
+bool pz_cancel(pz_completion* completion);
 
+int pz_result(const pz_completion* completion);
 
 #ifdef __cplusplus
     }
 #endif
-
 #endif // _PZ_H
