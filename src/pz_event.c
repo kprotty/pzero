@@ -1,5 +1,7 @@
 #include "pz_event.h"
 
+#define PZ_NS_PER_S 1000000000
+
 #ifdef _WIN32
     #include <Windows.h>
 
@@ -18,7 +20,7 @@
     static void pz_cond_wait(pz_cond* restrict cond, pz_mutex* restrict mutex, uint64_t timeout_ns) {
         DWORD delay_ms = INFINITE;
         if (PZ_UNLIKELY(timeout_ns != ~((uint64_t)0))) {
-            uint64_t timeout_ms = timeout_ns / 1'000'000;
+            uint64_t timeout_ms = timeout_ns / PZ_NS_PER_S;
             if (timeout_ms >= (uint64_t)INFINITE) {
                 delay_ms = INFINITE - 1;
             } else if (timeout_ms == 0) {
@@ -55,8 +57,8 @@
         struct timespec ts;
         PZ_ASSERT(clock_getttime(CLOCK_REALTIME, &ts));
 
-        uint64_t sec = timeout_ns / 1'000'000'000;
-        uint32_t nsec = (uint32_t)(timeout_ns % 1'000'000'000);
+        uint64_t sec = timeout_ns / PZ_NS_PER_S;
+        uint32_t nsec = (uint32_t)(timeout_ns % PZ_NS_PER_S);
 
         if (PZ_UNLIKELY(((uint64_t)((time_t)sec)) != sec)) {
             goto ts_overflow;
@@ -66,8 +68,8 @@
         }
 
         ts.tv_nsec += nsec;
-        if (ts.tv_nsec >= 1'000'000'000) {
-            ts.tv_nsec -= 1'000'000'000;
+        if (ts.tv_nsec >= PZ_NS_PER_S) {
+            ts.tv_nsec -= PZ_NS_PER_S;
             if (PZ_UNLIKELY(!PZ_OVERFLOW_ADD(ts.tv_sec, 1, &ts.tv_sec))) {
                 goto ts_overflow;
             }
@@ -77,7 +79,7 @@
 
     ts_overflow:
         ts.tv_sec = (time_t)(1ULL << ((sizeof(time_t) * CHAR_BITS) - 1));
-        ts.tv_nsec = 999'999'999;
+        ts.tv_nsec = PZ_NS_PER_S - 1;
     ts_wait:
         int rc = pthread_cond_timedwait(cond, mutex, &ts);
         if (PZ_UNLIKELY(rc != 0)) {

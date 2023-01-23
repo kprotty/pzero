@@ -3,13 +3,13 @@
 #ifdef _WIN32
     PZ_NONNULL(1)
     static void pz_time_get(pz_time* timestamp) {
-        PZ_ASSERT(QueryUnbiasedInterruptTime(ts));
+        PZ_ASSERT(QueryUnbiasedInterruptTime(timestamp));
     }
 
     PZ_NONNULL(1)
     static void pz_time_after(pz_time* timestamp, uint64_t nanos) {
         if (PZ_UNLIKELY(!PZ_OVERFLOW_ADD(*timestamp, nanos / 100ULL, timestamp))) {
-            timestamp = ~((ULONGLONG)0);
+            *timestamp = ~((ULONGLONG)0);
         }
     }
 

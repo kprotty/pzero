@@ -8,13 +8,17 @@
 #endif
 
 #define PZ_COLD __attribute__((__cold__))
-#define PZ_ALIGNED(alignment) __attribute__((__aligned__(alignment)))
 #define PZ_NONNULL(...) __attribute__((__nonnull__(__VA_ARGS__)))
+
+#define PZ_WRAPPING_ADD(x, y) ((x) + (y))
+#define PZ_WRAPPING_SUB(x, y) ((x) - (y))
+#define PZ_WRAPPING_MUL(x, y) ((x) * (y))
 
 #define PZ_OVERFLOW_ADD __builtin_add_overflow
 #define PZ_OVERFLOW_SUB __builtin_sub_overflow
 #define PZ_OVERFLOW_MUL __builtin_mul_overflow
 
+#define PZ_UNUSED(x) ((void)(x))
 #define PZ_LIKELY(cond) __builtin_expect((cond), 1)
 #define PZ_UNLIKELY(cond) __builtin_expect((cond), 0)
 
@@ -29,7 +33,5 @@
     #include <assert.h>
     #define PZ_ASSERT assert
 #endif
-
-typedef 
 
 #endif // _PZ_BUILTIN_H

@@ -12,17 +12,29 @@
         return true;
     }
 
-    static bool pz_thread_local_init() {
+    static DWORD tls_index;
+    static INIT_ONCE tls_once = INIT_ONCE_STATIC_INIT;
 
+    BOOL CALLBACK pz_thread_local_create(PINIT_ONCE _tls_once, PVOID _param, PVOID* _context) {
+        PZ_UNUSED(_tls_once);
+        PZ_UNUSED(_param);
+        PZ_UNUSED(_context);
+        tls_index = TlsAlloc();
+    }
+
+    static bool pz_thread_local_init(void) {
+        PZ_ASSERT(InitOnceExecuteOnce(&tls_once, pz_thread_local_create, NULL, NULL));
+        return tls_index != TLS_OUT_OF_INDEXES;
     }
 
     static void pz_thread_local_set(void* value) {
-
+        PZ_ASSERT(TlsSetValue(tls_index, value));
     }
 
-    static void* pz_thread_local_get() {
-
+    static void* pz_thread_local_get(void) {
+        return TlsGetValue(tls_index);
     }
+    
 #else
     PZ_NONNULL(1)
     static bool pz_thread_spawn_detached(pz_thread_func entry_point, void* param, size_t stack_size) {
@@ -48,15 +60,15 @@
         return spawned;
     }
 
-    static bool pz_thread_local_init() {
-
+    static bool pz_thread_local_init(void) {
+        #error TODO
     }
 
     static void pz_thread_local_set(void* value) {
-
+        #error TODO
     }
 
-    static void* pz_thread_local_get() {
-        
+    static void* pz_thread_local_get(void) {
+        #error TODO
     }
 #endif

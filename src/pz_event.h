@@ -8,7 +8,7 @@ typedef struct {
     _Atomic(void*) state;
 } pz_event;
 
-static const pz_event PZ_EVENT_INIT = {0};
+static const pz_event PZ_EVENT_INIT = {NULL};
 
 PZ_NONNULL(1)
 static bool pz_event_wait(pz_event* restrict event, const pz_time* restrict deadline);

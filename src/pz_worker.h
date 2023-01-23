@@ -4,8 +4,8 @@
 #include "pz_runnable.h"
 
 struct pz_worker {
-    alignas(PZ_ATOMIC_CACHE_LINE) _Atomic(pz_runnable*) run_next;
-    alignas(PZ_ATOMIC_CACHE_LINE) pz_buffer run_queue;
+    _Alignas(PZ_ATOMIC_CACHE_LINE) _Atomic(pz_runnable*) run_next;
+    _Alignas(PZ_ATOMIC_CACHE_LINE) pz_buffer run_queue;
 };
 
 
