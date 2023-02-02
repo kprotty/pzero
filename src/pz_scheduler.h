@@ -1,22 +1,11 @@
-#ifndef _PZ_SCHEDULER_H
-#define _PZ_SCHEDULER_H
+#pragma once
 
-#include "pz_runnable.h"
-#include "pz_reactor.h"
+#include "pz_queue.h"
+#include "pz_idle.h"
 
 typedef struct {
-    alignas(PZ_ATOMIC_CACHE_LINE) _Atomic(uint32_t) state;
-    alignas(PZ_ATOMIC_CACHE_LINE) pz_injector injector;
-    alignas(PZ_ATOMIC_CACHE_LINE) pz_reactor reactor;
-    alignas(PZ_ATOMIC_CACHE_LINE) _Atomic(pz_worker*) workers[0xff];
-
-    unsigned int event_poll_interval;
-    unsigned int task_poll_interval;
-    pz_trace_callback trace_callback;
-    size_t stack_size;
-    void* context;
+    _Alignas(PZ_ATOMIC_CACHE_LINE) _Atomic(uint32_t) state;
+    _Alignas(PZ_ATOMIC_CACHE_LINE) pz_injector injector;
+    _Alignas(PZ_ATOMIC_CACHE_LINE) pz_idle idle;
+    _Alignas(PZ_ATOMIC_CACHE_LINE) _Atomic(pz_worker*) workers[0xff];
 } pz_scheduler;
-
-
-
-#endif // _PZ_SCHEDULER_H

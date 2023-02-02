@@ -9,13 +9,7 @@ pub fn build(b: *std.build.Builder) void {
     pz.addIncludePath("./include");
     pz.addCSourceFiles(
         &.{
-            "src/pz_event.c",
-            "src/pz_idle.c",
-            "src/pz_runnable.c",
-            "src/pz_scheduler.c",
-            "src/pz_thread.c",
-            "src/pz_time.c",
-            "src/pz_worker.c",
+            "src/pz_queue.c",
         },
         &.{
             "-Wall",

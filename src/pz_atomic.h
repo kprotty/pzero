@@ -1,5 +1,4 @@
-#ifndef _PZ_ATOMIC_H
-#define _PZ_ATOMIC_H
+#pragma once
 
 #include "pz_builtin.h"
 #include <stdatomic.h>
@@ -23,5 +22,3 @@
 #else
     #define pz_atomic_spin_loop_hint() __asm__ volatile ("" ::: "memory")
 #endif
-
-#endif // _PZ_ATOMIC_H
